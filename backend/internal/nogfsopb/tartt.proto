@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+import "git-details.proto";
+
+service Tartt {
+    rpc TarttHead(TarttHeadI) returns (TarttHeadO);
+    rpc ListTars(ListTarsI) returns (ListTarsO);
+    rpc GetTarttconfig(GetTarttconfigI) returns (GetTarttconfigO);
+}
+
+message TarttHeadI {
+    bytes repo = 1;
+}
+
+message TarttHeadO {
+    bytes repo = 1;
+    bytes commit = 2;
+    WhoDate author = 3;
+    WhoDate committer = 4;
+}
+
+message ListTarsI {
+    bytes repo = 1;
+    // If `commit` is omitted, the server uses the latest head and returns
+    // commit details in the response.
+    bytes commit = 2;
+}
+
+message ListTarsO {
+    bytes repo = 1;
+    bytes commit = 2;
+    repeated TarInfo tars = 3;
+
+    // If the request does not specify `commit`, the server returns commit
+    // details `author` and `committer`.
+    WhoDate author = 4;
+    WhoDate committer = 5;
+}
+
+message TarInfo {
+    // `path` is the archive directory path starting with the store name.
+    string path = 1;
+
+    enum TarType {
+        TAR_UNSPECIFIED = 0;
+        TAR_FULL = 1;
+        TAR_PATCH = 2;
+    };
+    TarType tar_type = 2;
+
+    // `time` is the time, in Unix seconds, when tar was started.
+    int64 time = 3;
+
+    repeated TarManifestEntry manifest = 4;
+}
+
+message TarManifestEntry {
+    string file = 1;
+    int64 size = 2;
+    bytes sha256 = 3;
+    bytes sha512 = 4;
+}
+
+message GetTarttconfigI {
+    bytes repo = 1;
+    // If `commit` is omitted, the server uses the latest head and returns
+    // commit details in the response.
+    bytes commit = 2;
+}
+
+message GetTarttconfigO {
+    bytes repo = 1;
+    bytes commit = 2;
+    // `config_yaml` is the content of the Tartt repo's `tarttconfig.yml`.
+    bytes config_yaml = 3;
+
+    // If the request does not specify `commit`, the server returns commit
+    // details `author` and `committer`.
+    WhoDate author = 4;
+    WhoDate committer = 5;
+}

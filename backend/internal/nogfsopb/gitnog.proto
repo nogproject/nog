@@ -1,0 +1,94 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+import "git-details.proto";
+
+service GitNog {
+    rpc Head(HeadI) returns (HeadO);
+    rpc Summary(SummaryI) returns (SummaryO);
+    rpc Meta(MetaI) returns (MetaO);
+    // `GitNogTree.PutPathMetadata()` and `GitNog.PutMeta()` should return the
+    // same information.  The return proto message field IDs need not be
+    // identical, though.
+    rpc PutMeta(PutMetaI) returns (PutMetaO);
+    rpc Content(ContentI) returns (ContentO);
+}
+
+message HeadI {
+    bytes repo = 1;
+}
+
+message HeadO {
+    bytes repo = 1;
+    bytes commit_id = 2;
+    HeadGitCommits git_commits = 11;
+    WhoDate stat_author = 3;
+    WhoDate stat_committer = 4;
+    WhoDate sha_author = 5;
+    WhoDate sha_committer = 6;
+    WhoDate meta_author = 7;
+    WhoDate meta_committer = 8;
+    WhoDate content_author = 9;
+    WhoDate content_committer = 10;
+}
+
+message HeadGitCommits {
+    bytes stat = 1;
+    bytes sha = 2;
+    bytes meta = 3;
+    bytes content = 4;
+}
+
+message SummaryI {
+    bytes repo = 1;
+}
+
+message SummaryO {
+    bytes repo = 1;
+    bytes commit_id = 2;
+    int64 num_files = 3;
+    int64 num_dirs = 4;
+    int64 num_other = 5;
+}
+
+message MetaI {
+    bytes repo = 1;
+}
+
+message MetaO {
+    bytes repo = 1;
+    bytes commit_id = 2;
+    // XXX Maybe use stricter type, like kv list or map <string, ...>.
+    bytes meta_json = 3;
+}
+
+message PutMetaI {
+    bytes repo = 1;
+    bytes old_commit_id = 6;
+    bytes meta_json = 2;
+    string author_name = 3;
+    string author_email = 4;
+    string commit_message = 5;
+}
+
+message PutMetaO {
+    bytes repo = 1;
+    bytes git_nog_commit = 2;
+    HeadGitCommits git_commits = 4;
+    WhoDate meta_author = 5;
+    WhoDate meta_committer = 6;
+    bool is_new_commit = 3;
+}
+
+message ContentI {
+    bytes repo = 1;
+    string path = 2;
+}
+
+message ContentO {
+    bytes repo = 1;
+    bytes commit_id = 2;
+    bytes content = 3;
+}

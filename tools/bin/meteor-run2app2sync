@@ -1,0 +1,95 @@
+#!/bin/bash
+
+set -o nounset -o errexit -o pipefail -o noglob
+
+usage() {
+    cat <<\EOF
+`meteor-run2app2sync` starts one mongod and uses two separate dbs for two
+meteor app instances 'alice' and 'bob'.  It runs two `nog-app` instances and
+two corresponding `nog-sync-app` instances.  `mongod` is started as a replica
+set to provide oplog support.
+
+Run `meteor-run2app2sync` in `apps/nog-app/meteor` and follow the instructions.
+
+EOF
+    exit
+}
+
+[ $# -eq 0 ] || usage
+
+if ! pwd | grep -q 'apps/nog-app/meteor$'; then
+    echo >&2 'Wrong directory; expected `apps/nog-app/meteor`.'
+    exit 1
+fi
+
+# Discover the mongo binaries in the Meteor installation.
+xmongo="${HOME}/.meteor/$(dirname $(readlink ~/.meteor/meteor))/dev_bundle/mongodb/bin/mongo"
+xmongod="${xmongo}d"
+
+mongodPort=28017
+alicePort=4000
+aliceSyncPort=4001
+bobPort=5000
+bobSyncPort=5001
+
+echo "Will start:"
+echo
+echo " - mongod on port ${mongodPort},"
+echo " - alice on port ${alicePort} and ${aliceSyncPort},"
+echo " - bob on port ${bobPort} and ${bobSyncPort}."
+echo
+echo 'You may see build problems, because both meteor app instances fight for'
+echo 'the same build directory.  But it usually works well enough for testing.'
+echo
+echo "Connect with:"
+echo
+echo '```'
+echo "${xmongo} localhost:${mongodPort}"
+echo "open http://localhost:${alicePort}"
+echo "open http://localhost:${bobPort}"
+echo '```'
+echo
+echo "The first time you start mongod, you need to create a replica set."
+echo "To do so, connect with a mongo shell, as described above, and execute:"
+echo
+echo '```'
+echo 'rs.initiate({"_id": "rs0", "members": [{"_id": 1, "host": "127.0.0.1:'${mongodPort}'"}]})'
+echo '```'
+echo
+echo "Any key to start mongod.  CTRL-C to break."
+read
+
+trap 'kill $(jobs -p)' EXIT
+
+mkdir -p '.meteor/local/db_start2'
+${xmongod} --port ${mongodPort} --replSet 'rs0' --oplogSize 100 --dbpath ./.meteor/local/db_start2 |
+sed -l -e 's/^/mongod: /' &
+
+sleep 1
+echo
+echo "ENTER to start app.  CTRL-C to break."
+read
+
+export MONGO_OPLOG_URL="mongodb://127.0.0.1:${mongodPort}/local"
+
+export MONGO_URL="mongodb://127.0.0.1:${mongodPort}/nogalice"
+meteor run --port ${alicePort} --settings _private/settings-localhost-alice.json |
+sed -l -e 's/^/alice: /' &
+(
+cd '../../../experimental/nog-sync-app/meteor';
+meteor run --port ${aliceSyncPort} --settings _private/settings-localhost-alice.json |
+sed -l -e 's/^/syncalice: /'
+) &
+
+
+export MONGO_URL="mongodb://127.0.0.1:${mongodPort}/nogbob"
+meteor run --port ${bobPort} --settings _private/settings-localhost-bob.json |
+sed -l -e 's/^/bob: /' &
+(
+cd '../../../experimental/nog-sync-app/meteor';
+meteor run --port ${bobSyncPort} --settings _private/settings-localhost-bob.json |
+sed -l -e 's/^/syncbob: /'
+) &
+
+
+sleep 1000000000

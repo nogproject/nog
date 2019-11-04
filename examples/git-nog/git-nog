@@ -1,0 +1,1610 @@
+#!/usr/bin/env python3
+
+"""\
+git-nog
+
+Usage:
+  git-nog fetch <repo>
+  git-nog push <repo>
+  git-nog init-commitmap [--local] <repo>
+  git-nog reset-commitmap [--local] <repo>
+  git-nog show-commitmap [--local] <repo>
+  git-nog blob-status
+  git-nog blob-checkout <repo> [--] <pathspec>...
+  git-nog blob-add <repo> [--] <pathspec>...
+  git-nog testng <repo>
+  git-nog testgn <repo> <gitrev>
+
+Options:
+  -h --help     Print help.
+  --local       Operate on local commitmap.
+
+# Commands
+
+`git nog fetch` fetches the master branch of the nog `<repo>` and stores it as
+the git remote ref `nog/<repo>/master`, so that it can be used as an ordinary
+git remote.
+
+`git nog push` pushes the current HEAD to the nog master branch in `<repo>`.
+Push refuses non-fast-forward updates of master.
+
+The correspondence between git and nog commits is cached in the commitmap.  The
+commitmap can either be stored remotely in the nog repo (in the nog ref
+`git/commitmap`) or locally (in the git ref
+`refs/nog/<repo-fullname>/commitmap`).
+
+`git nog init-commitmap` creates the commitmap in the nog repo, which is used
+to cache the mapping between nog and git commits.
+
+`git nog reset-commitmap` clears the commitmap.  The next fetch or push will
+run without cache and, thus, traverse the full history.
+
+`git nog show-commitmap` displays the current commitmap.
+
+"""
+
+from copy import copy
+from datetime import datetime, timezone, timedelta
+from docopt import docopt
+from pprint import pprint
+from requests.exceptions import ReadTimeout, ConnectionError
+from subprocess import CalledProcessError
+from subprocess import check_output, call, check_call, DEVNULL, PIPE
+from tempfile import mkstemp
+from time import sleep, time
+import dateutil.parser
+import hashlib
+import json
+import nog
+import os
+import re
+import subprocess
+import sys
+
+
+_tests = """
+
+TODO: polish tests in order to share them.
+
+    # 20 secs.
+    cd ~/Desktop/tmp/gitnog
+    git-nog testng sprohaska/doc
+
+    # 3 sec.
+    cd ~/Desktop/tmp/gitnog
+    git-nog testgn sprohaska/testing_git-nog master
+
+    cd ~/WorkingCopies/amiraVI/src/zib-amira/
+    git-nog testgn sprohaska/testing_git-nog \
+        84ccf856a9177642f1bd6e9210f2685926b9da5a  # Seconds
+    git-nog testgn sprohaska/testing_git-nog \
+        9bb734b4cdc8b188684cb3cc23dd480ad96fdb9e  # Minute.
+
+"""
+
+# `git-zib` successfully imported
+# `zib-amira@ae68e6f5771d0767d17562a5d760be3b39c35e30` from git to nog and back
+# to git (`git-nog testgn ...`).
+#
+# The history contains a few non-obvious things:
+#
+#  - 13k commits.
+#  - multiple roots.
+#  - large objects.
+#  - non-utf-8-encoded objects.
+#  - non-utf-8-encoded authors, committers, and commit messages.  Some commits
+#    could not be created with a modern git.
+#  - git trees with file names that differ only in case, like `Readme.txt` and
+#    `readme.txt`.
+#
+# The import worked via a shaky wireless connection with simulated network
+# errors (complete disconnect from Internet; nog server restarts, including
+# some downtime).
+
+# `NOG_JSON_SUFFIX` is the file suffix used for storing nog object metadata.
+#
+# `NOG_TREE_JSON` is the file used for storing nog tree metadata.
+#
+# `NOG_IDVERSION_PREFIX` is the prefix used in the git commit message footer
+# for storing a nog commit idversion != 1.
+#
+# `NOG_AUTHORS_PREFIX` is the prefix used in the git commit message footer for
+# storing multiple nog authors.
+#
+# `NOG_META_PREFIX` is the prefix used in the git commit message footer for
+# storing nog commit meta.
+#
+# `MAX_TEXT_SIZE` is the maximum size for text.  If utf-8-encoded text is
+# larger, it will be stored as a blob.  The limit (300 KiB) is chosen such that
+# docs can be stored in MongoDB and DynamoDB.
+#
+# Assuming a text page has between 2000 and 4000 characters, around 250 to 500
+# pages can be stored in 1 MiB, and 75 to 150 in 300 KiB.  Larger text can be
+# stored, but it will be uploaded as a blob and, therefore, not be available as
+# fulltext in nog.
+#
+# The entire Amira codebase (amira.git + zib-amira.git) contains less than 20
+# files that are larger than 1 MiB, and those seem to contain either data or
+# automatically generated code.  It contains less than 50 files that are larger
+# than 300 KiB.
+#
+# DB limits:
+#
+#  - MongoDB doc size limit: 16 MiB in MongoDB 3.
+#  - DynamoDB doc size limit: 400 KiB.
+#
+# `COMMIT_DEFAULT_IDVERSION` and `OBJECT_DEFAULT_IDVERSION` specify the nog
+# idversions that will not be explicitly stored in the git history.  If nog
+# entries use a different idversion, they will be stored in git as a commit
+# message footer or a nog.json file, so that the nog ids can be reproduced from
+# the git history.
+
+# Suffix with leading dot.
+NOG_JSON_SUFFIX = '.nog.json'
+NOG_TREE_JSON = '__tree__.nog.json'
+# Prefixes with trailing space.
+NOG_IDVERSION_PREFIX = 'Nog-_idversion: '
+NOG_AUTHORS_PREFIX = 'Nog-authors: '
+NOG_META_PREFIX = 'Nog-meta: '
+MAX_TEXT_SIZE = 300 * 1024
+
+COMMIT_DEFAULT_IDVERSION = 1
+OBJECT_DEFAULT_IDVERSION = 1
+
+# A few quick retries, followed by a Fibonacci-like back-off sequence.
+retryDelays_s = (
+    1, 1, 1, 2, 2, 2, 3, 3, 3,
+    5, 8, 13, 20, 50, 100, 200, 300, 500, 1000, 2000, 5000)
+
+NULL_SHA1 = '0000000000000000000000000000000000000000'
+
+NOG_COMMITMAP_REF = 'git/commitmap'
+GIT_COMMITMAP_REF_FMT = 'refs/nog/%s/commitmap'
+
+def _gitCommitMapRef(repo):
+    return GIT_COMMITMAP_REF_FMT % repo.fullName
+
+gitTestingRef = 'refs/heads/nog-remote/test'
+
+
+def main():
+    args = docopt(__doc__, version='git-nog 0.0.1')
+    cmds = {
+        'fetch': cmdFetch,
+        'push': cmdPush,
+        'init-commitmap': cmdInitCommitmap,
+        'reset-commitmap': cmdResetCommitmap,
+        'show-commitmap': cmdShowCommitmap,
+        'blob-status': cmdBlobStatus,
+        'blob-checkout': cmdBlobCheckout,
+        'blob-add': cmdBlobAdd,
+        'testng': cmdTestNogGit,
+        'testgn': cmdTestGitNog
+    }
+    for name, cmd in cmds.items():
+        if args[name]:
+            return cmd(args)
+    die('Command not implemented.')
+
+
+def cmdPush(args):
+    repo = args['<repo>']
+    gitCommit = gitCatCommit('HEAD')
+    remote = nog.openRepo(repo)
+    master = remote.getMaster()
+    cmap = CommitMap(remote)
+    cmap.fetch()
+    conv = GitToNogWriter()
+    conv.preseedGitCommits(cmap.values())
+    nogCommitId = conv.postHistory(remote, gitCommit)
+    if (conv.hasNogCommit(master.sha1) or
+            canFFNogFromTo(master.sha1, remote.getCommit(nogCommitId))):
+        pass
+    else:
+        raise RuntimeError('Cannot fast-forward master.')
+    remote.updateRef('branches/master', nogCommitId, master.sha1)
+    if nogCommitId == master.sha1:
+        print('Already up-to-date')
+    else:
+        print('updated nog master to %s' % nogCommitId)
+    cmap.insert(conv.commitmapEntries())
+    cmap.post()
+
+
+def canFFNogFromTo(oldId, newCommit):
+    stack = []
+    stack.append(newCommit)
+    while len(stack) > 0:
+        c = stack.pop()
+        if c.sha1 == oldId:
+            return True
+        for p in c.parents:
+            stack.append(p)
+    return False
+
+
+# XXX: Extend nog.py to support posting stream of objects, trees, and commits.
+class GitToNogWriter:
+
+    def __init__(self):
+        self._gitCommits = {}
+        self.commitmapByNog = {}
+
+    def preseedGitCommits(self, values):
+        for v in values:
+            self._gitCommits[v['git']] = {'nogsha1': v['nog']}
+
+    def hasNogCommit(self, nogid):
+        return nogid in self.commitmapByNog
+
+    def commitmapEntries(self):
+        return self.commitmapByNog.values()
+
+    def postHistory(self, remote, gitcommit):
+        stack = []
+        stack.append(gitcommit)
+        while len(stack) > 0:
+            gitcommit = stack[-1]
+            missing = False
+            parents = []
+            for psha1 in gitcommit['parents']:
+                try:
+                    parents.append(self._gitCommits[psha1])
+                except KeyError:
+                    missing = True
+                    stack.append(gitCatCommit(psha1))
+            if missing:
+                continue
+            print('queued', len(stack), end=' ')
+            stack.pop()
+            nogsha1 = self.postOneCommit(remote, gitcommit, parents)
+            self.commitmapByNog[nogsha1] = {
+                'git': gitcommit['sha1'],
+                'nog': nogsha1,
+                'y': gitcommit['commitDate'].year,
+                'm': gitcommit['commitDate'].month
+            }
+        return nogsha1
+
+    def postOneCommit(self, remote, gitcommit, parents):
+        print('gitcommit', gitcommit['sha1'], end=' ')
+        tree = nogTreeFromGitCommitId(gitcommit['sha1'])
+        print('nogtree', tree.sha1, end=' ')
+        retry(lambda: remote.postTree(tree))
+        tree.collapse()
+        (subject, message) = splitGitMessage(gitcommit['message'])
+        (message, authors, meta, idversion) = parseNogFooter(message)
+        if len(authors) == 0:
+            authors.append(gitcommit['author'])
+        encoding = gitcommit['encoding']
+        if encoding != 'utf-8':
+            meta['git'] = {'encoding': encoding}
+        print('nogcommit', end=' ')
+        # Explicitly specify idversion 1 to create reproducible commits
+        # independently of server defaults.
+        nogsha1 = retry(lambda: remote.postCommitContent({
+            'subject': subject,
+            'message': message,
+            'tree': tree.sha1,
+            'parents': [p['nogsha1'] for p in parents],
+            'authors': authors,
+            'authorDate': fmtNogDate(gitcommit['authorDate']),
+            'committer': gitcommit['committer'],
+            'commitDate': fmtNogDate(gitcommit['commitDate']),
+            'meta': meta,
+            '_idversion': idversion
+        }))
+        print(nogsha1)
+        self._gitCommits[gitcommit['sha1']] = {'nogsha1': nogsha1}
+        return nogsha1
+
+
+# The git message is split into a nog subject and body at an empty line such
+# that concat(subject, '\n\n', message) reproduces the git message if the nog
+# message is non-empty:
+#
+#  -  gitmsg  =  subject + message
+#  -  a          a         null
+#  -  a\n        a\n       null
+#  -  a\n\n      a\n\n     null
+#  -  a\nb       a\nb      null
+#  -  a\nb\n     a\nb\n    null
+#  -  a\n\nb     a         b
+#  -  a\n\nb\n   a         b\n
+#
+def splitGitMessage(gitmsg):
+    rgxSubjectBody = re.compile(
+        r'\A(.*?)\n\n(.+)\Z', re.MULTILINE | re.DOTALL)
+    m = rgxSubjectBody.match(gitmsg)
+    if m:
+        return m.group(1, 2)
+    return (gitmsg, '')
+
+
+def parseNogFooter(message):
+    authors = []
+    meta = []
+    idversion = COMMIT_DEFAULT_IDVERSION
+    haveFooter = False
+    for l in message.split('\n'):
+        if l.startswith(NOG_AUTHORS_PREFIX):
+            authors.append(l[len(NOG_AUTHORS_PREFIX):])
+        elif l.startswith(NOG_META_PREFIX):
+            meta.append(l[len(NOG_META_PREFIX):])
+        elif l.startswith(NOG_IDVERSION_PREFIX):
+            idversion = int(l[len(NOG_IDVERSION_PREFIX):])
+        else:
+            continue
+        haveFooter = True
+    if len(meta):
+        meta = json.loads(''.join(meta))
+    else:
+        meta = {}
+
+    # If there is a footer, strip the footer lines and the two `\n` before the
+    # footer.
+    if haveFooter:
+        for pfx in (NOG_IDVERSION_PREFIX, NOG_AUTHORS_PREFIX, NOG_META_PREFIX):
+            message = re.sub('^' + pfx + '.*?$\n?', '', message,
+                             flags=re.MULTILINE)
+        message = message[:-2]
+
+    return (message, authors, meta, idversion)
+
+
+def cmdFetch(args):
+    repo = args['<repo>']
+    remote = nog.openRepo(repo)
+    master = remote.getMaster()
+    cmap = CommitMap(remote)
+    try:
+        cmap.fetch()
+    except RuntimeError as err:
+        if 'ERR_REF_NOT_FOUND' in str(err):
+            print('Note: Failed to fetch remote commitmap.')
+            try:
+                cmap.loadLocal()
+            except CalledProcessError:
+                die('Also failed to load local commitmap.')
+            print('Note: Using local commitmap.')
+        else:
+            raise
+    ref = 'refs/remotes/nog/' + remote.fullName + '/master'
+    (fp, marksPath) = mkstemp()
+    os.close(fp)
+    with subprocess.Popen(
+            ('git', '-c', 'core.ignorecase=false',
+                'fast-import', '--export-marks='+marksPath),
+            stdin=subprocess.PIPE) as child:
+        conv = NogToGitFastExport(child.stdin)
+        conv.preseedGitCommits(cmap.values())
+        conv.write(master, ref)
+    cmap.insert(conv.commitmapEntries(marksPath))
+    os.unlink(marksPath)
+    try:
+        cmap.post()
+    except RuntimeError as err:
+        print('Note: Failed to update remote commitmap.  Writing local map.')
+        cmap.writeLocal()
+
+
+def cmdInitCommitmap(args):
+    repo = args['<repo>']
+    if args['--local']:
+        cmdInitCommitmapLocal(args)
+        return
+    remote = nog.openRepo(repo)
+    try:
+        c = remote.getRef(NOG_COMMITMAP_REF)
+        raise RuntimeError('Commitmap already exists.')
+    except RuntimeError as err:
+        if 'ERR_REF_NOT_FOUND' in str(err):
+            pass
+        else:
+            raise
+    tree = nog.Tree()
+    treeId = remote.postTree(tree)
+    commitId = remote.postCommitContent({
+        'subject': 'Init git nog commitmap',
+        'message': '',
+        'tree': treeId,
+        'parents': [],
+        'meta': {}
+    })
+    sha1 = remote.updateRef(NOG_COMMITMAP_REF, commitId, NULL_SHA1)
+    msg = 'Created commitmap for `%s` in nog commit `%s`'
+    print(msg % (remote.fullName, sha1))
+
+
+def cmdResetCommitmap(args):
+    repo = args['<repo>']
+    if args['--local']:
+        cmdResetCommitmapLocal(args)
+        return
+    remote = nog.openRepo(repo)
+    try:
+        c = remote.getRef(NOG_COMMITMAP_REF)
+        oldCommitId = c['sha1']
+        parents = [oldCommitId]
+        action = 'Reset'
+    except RuntimeError as err:
+        if 'ERR_REF_NOT_FOUND' in str(err):
+            oldCommitId = NULL_SHA1
+            parents = []
+            action = 'Created'
+        else:
+            raise
+    tree = nog.Tree()
+    treeId = remote.postTree(tree)
+    commitId = remote.postCommitContent({
+        'subject': 'Reset git nog commitmap',
+        'message': '',
+        'tree': treeId,
+        'parents': parents,
+        'meta': {}
+    })
+    sha1 = remote.updateRef(NOG_COMMITMAP_REF, commitId, oldCommitId)
+    msg = '%s commitmap for `%s` in nog commit `%s`'
+    print(msg % (action, remote.fullName, sha1))
+
+
+def cmdShowCommitmap(args):
+    repo = args['<repo>']
+    opt_local = args['--local']
+    remote = nog.openRepo(repo)
+    cmap = CommitMap(remote)
+    if opt_local:
+        cmap.loadLocal()
+    else:
+        cmap.fetch()
+    print('git                                      nog')
+    for v in cmap.values():
+        print(v['git'], v['nog'])
+
+
+def cmdInitCommitmapLocal(args):
+    repo = args['<repo>']
+    remote = nog.openRepo(repo)
+    ref = _gitCommitMapRef(remote)
+    sha1 = gitRevParse(ref, quiet=True)
+    if sha1:
+        die('Local gitmap already exists.')
+    tree = gitMktree([])  # Empty tree.
+    commit = gitCommitTree(tree, 'Initialize nog commitmap')
+    gitUpdateRef(ref, commit, None)
+    print('Created local commitmap `%s` in git commit `%s`.' % (ref, commit))
+
+
+def cmdResetCommitmapLocal(args):
+    repo = args['<repo>']
+    remote = nog.openRepo(repo)
+    ref = _gitCommitMapRef(remote)
+    sha1 = gitRevParse(ref, quiet=True)
+    if not sha1:
+        die('There is no local commitmap `%s`.' % ref)
+    tree = gitMktree([])  # Empty tree.
+    old = gitRevParse(sha1 + '^{tree}')
+    if tree == old:
+        print('Local commitmap already empty.')
+        return
+    commit = gitCommitTree(tree, 'Reset nog commitmap', parents=[sha1])
+    gitUpdateRef(ref, commit, sha1)
+    print('Reset local commitmap `%s` in git commit `%s`.' % (ref, commit))
+
+
+# The commitmap is stored by `commitDate` in a tree `YYYY/MM` as a list of
+# `{git: <sha1>, nog: <sha1>}` (sorted by `git`) in `meta.git.commitmap`.
+class CommitMap:
+
+    def __init__(self, remote):
+        self._remote = remote
+        self._map = {}
+
+    def values(self):
+        cmap = self._map
+        for byMM in cmap.values():
+            for mm in byMM.values():
+                for e in mm:
+                    yield {'git': e[0], 'nog': e[1]}
+
+    def fetch(self):
+        c = self._remote.getRef(NOG_COMMITMAP_REF)
+        cid = c['sha1']
+        self._fetchCommit(cid)
+
+    def _fetchCommit(self, cid):
+        c = self._remote.getCommit(cid)
+        root = c.tree
+        rgxYYYY = re.compile(r'^[1-2][0-9]{3}$')
+        rgxMM = re.compile(r'^(0[1-9]|10|11|12)$')
+
+        def values():
+            for tree in root.trees():
+                if not rgxYYYY.match(tree.name):
+                    msg = 'Invalid commitmap tree `%s`.' % tree.name
+                    raise RuntimeError(msg)
+                for obj in tree.objects():
+                    if not rgxMM.match(obj.name):
+                        msg = 'Invalid commitmap object `%s`.' % obj.name
+                        raise RuntimeError(msg)
+                    for v in obj.meta['commitmap']:
+                        v = copy(v)
+                        v.update({'y': int(tree.name), 'm': int(obj.name)})
+                        yield v
+
+        self.insert(values())
+
+    def insert(self, values):
+        for v in values:
+            y = '%04d' % v['y']
+            m = '%02d' % v['m']
+            bucket = self._map.setdefault(y, {}).setdefault(m, set())
+            bucket.add((v['git'], v['nog']))
+
+    def post(self):
+        while True:
+            try:
+                self._tryPost()
+                break
+            except RuntimeError as err:
+                if 'ERR_REF_MISMATCH' in str(err):
+                    pass
+                else:
+                    raise
+
+    def _tryPost(self):
+        cid = self._remote.getRef(NOG_COMMITMAP_REF)['sha1']
+        self._fetchCommit(cid)
+
+        def cmapAsTree(cmap):
+            root = nog.Tree()
+            for yyyy in sorted(cmap.keys()):
+                tree = nog.Tree()
+                root.append(tree)
+                tree.name = yyyy
+                byMM = cmap[yyyy]
+                for mm in sorted(byMM.keys()):
+                    obj = nog.Object()
+                    tree.append(obj)
+                    obj.name = mm
+                    values = [{'git': e[0], 'nog': e[1]} for e in byMM[mm]]
+                    values.sort(key=lambda v: v['git'])
+                    obj.meta['commitmap'] = values
+            return root
+
+        root = cmapAsTree(self._map)
+        commit = self._remote.getCommit(cid)
+        if commit.tree.sha1 == root.sha1:
+            print('Commitmap already up-to-date.')
+            return
+        commitId = self._remote.postCommitContent({
+            'subject': 'Update git nog commitmap',
+            'message': '',
+            'tree': self._remote.postTree(root),
+            'parents': [cid],
+            'meta': {}
+        })
+        sha1 = self._remote.updateRef(NOG_COMMITMAP_REF, commitId, cid)
+        msg = 'Updated commitmap for `%s` in nog commit `%s`'
+        print(msg % (self._remote.fullName, sha1))
+
+    def loadLocal(self):
+        cid = gitRevParse(_gitCommitMapRef(self._remote))
+        self._loadLocalCommit(cid)
+
+    def _loadLocalCommit(self, cid):
+        rgxYYYY = re.compile(r'^[1-2][0-9]{3}$')
+        rgxMM = re.compile(r'^(0[1-9]|10|11|12)$')
+
+        def values():
+            for (ty, perm, sha1, name) in gitLsTreeR(cid):
+                (yyyy, mm) = name.split('/')
+                if not rgxYYYY.match(yyyy):
+                    msg = 'Invalid local commitmap entry `%s`.' % name
+                    raise RuntimeError(msg)
+                if not rgxMM.match(mm):
+                    msg = 'Invalid local commitmap entry `%s`.' % name
+                    raise RuntimeError(msg)
+                json = gitCatBlobJson(sha1)
+                for v in json:
+                    v.update({'y': int(yyyy), 'm': int(mm)})
+                    yield v
+
+        self.insert(values())
+
+    def writeLocal(self):
+
+        def stringifyLinewise(values):
+            return (
+                '[\n' +
+                (',\n'.join(
+                    '{{"git": "{git}", "nog": "{nog}"}}'.format(**v)
+                    for v in values)) +
+                '\n]\n'
+            )
+
+        def cmapAsGitTree(cmap):
+            root = []
+            for yyyy, byMM in cmap.items():
+                byMM = cmap[yyyy]
+                tree = []
+                for mm, bucket in byMM.items():
+                    values = [{'git': e[0], 'nog': e[1]} for e in bucket]
+                    values.sort(key=lambda v: v['git'])
+                    json = stringifyLinewise(values)
+                    sha1 = gitHashObject(json.encode('utf-8'))
+                    tree.append(('100644', 'blob', sha1, mm))
+                sha1 = gitMktree(tree)
+                root.append(('040000', 'tree', sha1, yyyy))
+            return gitMktree(root)
+
+        ref = _gitCommitMapRef(self._remote)
+        cid = gitRevParse(ref)
+        self._loadLocalCommit(cid)
+        tree = cmapAsGitTree(self._map)
+        old = gitRevParse(cid + '^{tree}')
+        if tree == old:
+            print('Local commitmap already up-to-date')
+            return
+        commit = gitCommitTree(tree, 'Update nog commitmap', parents=[cid])
+        gitUpdateRef(ref, commit, cid)
+        print('Updated local commitmap `%s` `%s`.' % (ref, commit))
+
+
+def cmdBlobStatus(args):
+    for nogPath in iterNogJsons():
+        if nogPath.endswith(NOG_TREE_JSON):
+            continue
+
+        with open(nogPath, 'r') as fp:
+            nog = json.load(fp)
+        try:
+            blob = nog['blob']
+        except KeyError:
+            continue
+
+        path = nogPath[:-len(NOG_JSON_SUFFIX)]
+
+        if not os.path.exists(path):
+            print('-', path)
+            continue
+
+        if mtimeEq(path, nogPath):
+            print(' ', path)
+            continue
+
+        if sha1_hex(path) == blob:
+            syncMtime(path, nogPath)
+            print(' ', path)
+            continue
+
+        print('M', path)
+
+
+def cmdBlobCheckout(args):
+    repo = args['<repo>']
+    remote = nog.openRepo(repo)
+    pathspec = args['<pathspec>']
+
+    def iterBlobPaths():
+        paths = set(gitLsFiles(['--'] + pathspec))
+        paths.update(pathspec)
+        for p in paths:
+            if p.endswith(NOG_TREE_JSON):
+                continue
+            if p.endswith(NOG_JSON_SUFFIX):
+                path = p[:-len(NOG_JSON_SUFFIX)]
+                nogPath = p
+            else:
+                path = p
+                nogPath = p + NOG_JSON_SUFFIX
+            if not os.path.exists(nogPath):
+                continue
+
+            # Trust mtime: Skip if equal.
+            if os.path.exists(path) and mtimeEq(path, nogPath):
+                continue
+
+            with open(nogPath, 'r') as fp:
+                nog = json.load(fp)
+            try:
+                blob = nog['blob']
+            except KeyError:
+                continue
+
+            yield (blob, path)
+
+    bps = list(iterBlobPaths())
+    remote.prefetchBlobs(bp[0] for bp in bps)
+    for (blob, path) in bps:
+        remote.copyBlob(blob, path)
+        syncMtime(path, path + NOG_JSON_SUFFIX)
+        print(path)
+
+
+def cmdBlobAdd(args):
+    repo = args['<repo>']
+    remote = nog.openRepo(repo)
+    pathspec = args['<pathspec>']
+
+    def iterPaths():
+        paths = set(gitLsFiles(['--other', '--'] + pathspec))
+        paths.update(gitLsFiles(['--'] + pathspec))
+        for p in paths:
+            if p.endswith(NOG_TREE_JSON):
+                continue
+            if p.endswith(NOG_JSON_SUFFIX):
+                path = p[:-len(NOG_JSON_SUFFIX)]
+                nogPath = p
+            else:
+                path = p
+                nogPath = p + NOG_JSON_SUFFIX
+
+            if not os.path.exists(path):
+                continue
+
+            # Trust mtime: Skip if equal.
+            if os.path.exists(nogPath) and mtimeEq(path, nogPath):
+                continue
+
+            blobf = nog.BlobFile(path)
+            if os.path.exists(nogPath):
+                with open(nogPath, 'r') as fp:
+                    obj = json.load(fp)
+                blob = obj.get('blob', None)
+                if blobf.sha1 == blob:
+                    syncMtime(path, nogPath)
+                    continue
+
+            yield blobf
+
+    bfs = list(iterPaths())
+    remote.uploadBlobs(bfs)
+    for b in bfs:
+        path = b.path
+        nogPath = path + NOG_JSON_SUFFIX
+        if os.path.exists(nogPath):
+            with open(nogPath, 'r') as fp:
+                obj = json.load(fp)
+        else:
+            obj = {}
+        obj['blob'] = b.sha1
+        with open(nogPath, 'w') as fp:
+            fp.write(stringify_pretty(obj))
+        gitAdd(nogPath)
+        syncMtime(path, nogPath)
+
+
+def syncMtime(p, q):
+    mp = os.path.getmtime(p)
+    mq = os.path.getmtime(q)
+    if mp == mq:
+        return
+    mtime = max(mp, mq)
+    now = time()
+    atime = now
+    os.utime(p, (atime, mtime))
+    os.utime(q, (atime, mtime))
+
+
+def mtimeEq(p, q):
+    return (os.path.getmtime(p) == os.path.getmtime(q))
+
+
+def sha1_hex(path):
+    BLOCKSIZE = 8 * 1024
+    h = hashlib.sha1()
+    with open(path, 'rb') as fp:
+        while True:
+            buf = fp.read(BLOCKSIZE)
+            if len(buf) == 0:
+                break
+            h.update(buf)
+    return h.hexdigest()
+
+
+# `testng` fetches nog master, pushes it back to nog, and fetches it again.
+def cmdTestNogGit(args):
+    repo = args['<repo>']
+
+    gitTestingRef2 = gitTestingRef + '-2'
+    print('Deleting testing refs', gitTestingRef, gitTestingRef2)
+    gitCheck(['update-ref', '-d', gitTestingRef])
+    gitCheck(['update-ref', '-d', gitTestingRef2])
+
+    remote = nog.openRepo(repo)
+    master = remote.getMaster()
+
+    with subprocess.Popen(
+            ('git', '-c', 'core.ignorecase=false', 'fast-import'),
+            stdin=subprocess.PIPE) as child:
+        conv = NogToGitFastExport(child.stdin)
+        conv.write(master, gitTestingRef)
+        print()
+
+    gitCommit = gitCatCommit(gitTestingRef)
+    conv = GitToNogWriter()
+    nogCommitId = conv.postHistory(remote, gitCommit)
+    nogCommit = remote.getCommit(nogCommitId)
+    print()
+
+    with subprocess.Popen(
+            ('git', '-c', 'core.ignorecase=false', 'fast-import'),
+            stdin=subprocess.PIPE) as child:
+        conv = NogToGitFastExport(child.stdin)
+        conv.write(nogCommit, gitTestingRef2)
+        print()
+
+    if nogCommitId == master.sha1:
+        print('nog->git->nog matches nog master.  Good.')
+    else:
+        print('nog->git->nog does not matches nog master.  BAD.')
+
+
+# `testgn` pushes the given git ref to nog and fetches it back to git.
+def cmdTestGitNog(args):
+    repo = args['<repo>']
+    gitrev = args['<gitrev>']
+
+    print('Deteting testing refs', gitTestingRef)
+    gitCheck(['update-ref', '-d', gitTestingRef])
+
+    remote = nog.openRepo(repo)
+
+    gitCommit = gitCatCommit(gitrev)
+    conv = GitToNogWriter()
+    nogCommitId = conv.postHistory(remote, gitCommit)
+    nogCommit = remote.getCommit(nogCommitId)
+    print()
+
+    with subprocess.Popen(
+            ('git', '-c', 'core.ignorecase=false', 'fast-import'),
+            stdin=subprocess.PIPE) as child:
+        conv = NogToGitFastExport(child.stdin)
+        conv.write(nogCommit, gitTestingRef)
+        print()
+
+    if gitRevParse(gitrev) == gitRevParse(gitTestingRef):
+        print('git->nog->git matches.  Good.')
+    else:
+        print('git->nog->git mismatches.  BAD.')
+
+
+class NogToGitFastExport:
+
+    def __init__(self, fp):
+        self._fp = fp
+        self._mark = 0
+        self._nogCommits = {}
+        self._markToNog = {}
+
+    def _getMark(self, nogcommit):
+        self._mark += 1
+        self._markToNog[self._mark] = {
+            'nog': nogcommit.sha1,
+            'y': nogcommit.commitDate.year,
+            'm': nogcommit.commitDate.month,
+        }
+        return self._mark
+
+    def preseedGitCommits(self, values):
+        for v in values:
+            self._nogCommits[v['nog']] = {'gitsha1': v['git']}
+
+    def commitmapEntries(self, marksPath):
+        with open(marksPath) as fp:
+            for l in fp.readlines():
+                l = l.rstrip()
+                (mark, gitsha1) = l.split(' ')
+                mark = int(mark[1:])
+                v = self._markToNog[mark]
+                v = copy(v)
+                v['git'] = gitsha1
+                yield v
+
+    def write(self, commit, gitRef):
+        self.writeHistory(commit, gitRef)
+        self._write('done\n')
+
+    def writeHistory(self, commit, gitRef):
+        stack = []
+        stack.append(commit)
+        while len(stack) > 0:
+            commit = stack[-1]
+            missing = False
+            parents = []
+            # Force fetching content with retry.
+            retry(lambda: commit.content)
+            for p in commit.parents:
+                try:
+                    c = self._nogCommits[p.sha1]
+                    # For preseeded commits, check whether local git has them.
+                    if 'gitsha1' in c:
+                        if not gitCommitExists(c['gitsha1']):
+                            raise KeyError
+                    parents.append(c)
+                except KeyError:
+                    missing = True
+                    stack.append(p)
+            if missing:
+                continue
+            print('queued', len(stack), end=' ')
+            stack.pop()
+            self.writeOneCommit(commit, parents, gitRef)
+
+    def _write(self, s):
+        self._fp.write(s.encode('utf-8'))
+
+    def _writebuf(self, dat):
+        self._fp.write(dat)
+
+    def writeOneCommit(self, commit, parents, gitRef):
+        print('nogcommit', commit.sha1, 'nogtree', commit.tree.sha1)
+
+        # Determine potential non-standard commit message encoding from meta,
+        # and exclude `meta.git` from footer.
+        meta = commit.meta
+        encoding = 'utf-8'
+        if 'git' in meta:
+            encoding = meta['git'].get('encoding', 'utf-8')
+            meta = copy(meta)
+            del meta['git']
+
+        mark = self._getMark(commit)
+        if len(parents) == 0:
+            self._write('reset %s\n' % gitRef)
+        self._write('commit %s\n' % gitRef)
+        self._write('mark :%d\n' % mark)
+        text = ('author %s %s\n' % (commit.authors[0],
+                                    fmtGitDate(commit.authorDate)))
+        self._writebuf(text.encode(encoding))
+        text = ('committer %s %s\n' % (commit.committer,
+                                       fmtGitDate(commit.commitDate)))
+        self._writebuf(text.encode(encoding))
+
+        gitmsg = commit.subject
+        if commit.message != '':
+            gitmsg += '\n\n'
+            gitmsg += commit.message
+
+        # Add Nog-x footer lines in alphabetical x-order.
+        footer = []
+        if commit.idversion != COMMIT_DEFAULT_IDVERSION:
+            footer.append('%s%d' % (NOG_IDVERSION_PREFIX, commit.idversion))
+        if len(commit.authors) > 1:
+            lines = ('%s%s' % (NOG_AUTHORS_PREFIX, a) for a in commit.authors)
+            footer.extend(lines)
+        if meta != {}:
+            lines = stringify_pretty(meta).rstrip().split('\n')
+            footer.extend('%s%s' % (NOG_META_PREFIX, l) for l in lines)
+        if len(footer) > 0:
+            gitmsg += '\n\n'
+            gitmsg += '\n'.join(footer)
+
+        dat = gitmsg.encode(encoding)
+        self._write('data %d\n' % len(dat))
+        self._writebuf(dat)
+        self._write('\n')
+        if len(parents) > 0:
+            p = parents[0]
+            try:
+                self._write('from :%d\n' % p['mark'])
+            except KeyError:
+                self._write('from %s\n' % p['gitsha1'])
+        for p in parents[1:]:
+            try:
+                self._write('merge :%d\n' % p['mark'])
+            except KeyError:
+                self._write('merge :%d\n' % p['gitsha1'])
+        self._write('deleteall\n')
+        self.writeNogTree(commit.tree)
+        self._write('\n')
+        self._nogCommits[commit.sha1] = {'mark': mark}
+
+    # The JSON must follow strict rules to ensure a one-to-one mapping.  Manual
+    # editing, therefore, is probably not reasonable and using a canonical JSON
+    # encoding might be ok.  But git diff works better for lines, and git
+    # history browsing seems relevant.  Therefore use pretty JSON encoding.
+
+    def writeNogTree(self, nogTree):
+        # `fileTreeFromNogTree()` triggers all the network activity, including
+        # prefetching blobs, and may need to be retried.  `writeFileTree()` can
+        # assume that everything is available locally.
+        ft = retry(lambda: fileTreeFromNogTree(nogTree))
+        self.writeFileTree(ft)
+
+    def writeFileTree(self, tree, prefix=None):
+        isRootTree = (prefix is None)
+        prefix = prefix or ''
+
+        def isEmptyTree(t):
+            return next(t['nog'].entries(), None) == None
+
+        # Do not force writing an empty NOG_TREE_JSON for an empty git root
+        # tree, since git will maintain an empty root trees on its own.  But do
+        # write NOG_TREE_JSON for empty child trees to force git to keep it; it
+        # would not store an empty child tree.
+        if tree['json'] != {} or (isEmptyTree(tree) and not isRootTree):
+            self._write('M 100644 inline %s%s\n' % (prefix, NOG_TREE_JSON))
+            dat = stringify_pretty(tree['json']).encode('utf-8')
+            self._write('data %d\n' % len(dat))
+            self._writebuf(dat)
+            self._write('\n')
+        for e in tree['entries']:
+            path = prefix + e['path']
+            nog = e['nog']
+            submodule = e.get('submodule', None)
+            if nog.type == 'object':
+                dat = None
+                mode = e['mode']
+                if e['storage'] == 'text':
+                    text = nog.text
+                    dat = text.encode('utf-8')
+                elif e['storage'] == 'gitblob':
+                    # XXX: stream copy blob instead of reading it completely.
+                    with nog.openBlob() as blobfp:
+                        dat = blobfp.read()
+                if dat is not None:
+                    self._write('M %s inline %s\n' % (mode, path))
+                    self._write('data %d\n' % len(dat))
+                    self._writebuf(dat)
+                    self._write('\n')
+                if e['json'] != {} or e['storage'] == 'none':
+                    self._write('M %s inline %s%s\n' % (mode, path,
+                                                        NOG_JSON_SUFFIX))
+                    dat = stringify_pretty(e['json']).encode('utf-8')
+                    self._write('data %d\n' % len(dat))
+                    self._writebuf(dat)
+                    self._write('\n')
+            elif submodule:
+                self._write('M 160000 %s %s\n' % (submodule, path))
+                if e['json'] != {}:
+                    self._write('M %s inline %s%s\n' % (mode, path,
+                                                        NOG_JSON_SUFFIX))
+                    dat = stringify_pretty(e['json']).encode('utf-8')
+                    self._write('data %d\n' % len(dat))
+                    self._writebuf(dat)
+                    self._write('\n')
+            elif nog.type == 'tree':
+                self.writeFileTree(e, prefix=(path + '/'))
+            else:
+                die('Invalid nog type at `%s`.' % path)
+
+
+# Prefetch blobs, so that `writeFileTree()` need not worry about network
+# problems.
+def fileTreeFromNogTree(tree):
+    blobs = []
+    ft = _fileTreeFromNogTree(tree, blobs)
+    tree._repo.prefetchBlobs(blobs)
+    name = ft['nog'].name
+    if name != '':
+        ft['json']['name'] = name
+    return ft
+
+
+def _fileTreeFromNogTree(tree, blobs):
+    # Do not store metadata that is inferred from git repr.
+    def jsonFromMeta(meta):
+        meta = copy(meta)
+        for k in ('git', 'content'):
+            try:
+                del meta[k]
+            except KeyError:
+                pass
+        if meta != {}:
+            return {'meta': meta}
+        else:
+            return {}
+
+    def determineStorage(obj):
+        storage = obj.meta.get('git', {}).get('storage', None)
+        if storage:
+            return storage
+        if obj.text is not None:
+            return 'text'
+        elif e.blob and e.blob != NULL_SHA1:
+            return 'nogblob'
+        else:
+            return 'none'
+
+    entries = []
+    for e in tree.entries():
+        if e.type == 'object':
+            json = jsonFromMeta(e.meta)
+            storage = determineStorage(e)
+            if storage == 'nogblob':
+                json['blob'] = e.blob
+            elif storage == 'gitblob':
+                # Queue blob for prefetching.
+                blobs.append(e.blob)
+            if e.idversion != OBJECT_DEFAULT_IDVERSION:
+                json['idversion'] = e.idversion
+            entries.append({
+                'nog': e,
+                'storage': storage,
+                'mode': e.meta.get('git', {}).get('mode', '100644'),
+                'json': json
+            })
+        elif e.type == 'tree':
+            submodule = e.meta.get('git', {}).get('commit', None)
+            if submodule:
+                entries.append({
+                    'nog': e,
+                    'json': jsonFromMeta(e.meta),
+                    'submodule': submodule
+                })
+            else:
+                entries.append(_fileTreeFromNogTree(e, blobs))
+        else:
+            raise RuntimeError('Invalid nog entry type.')
+
+    up = UniquePather()
+    for e in entries:
+        name = e['nog'].name
+        if isReservedName(name):
+            msg = 'Cannot store reserved name `%s` as a file.' % name
+            raise RuntimeError(msg)
+        path = up.uniquePath(fsSafeName(name))
+        e['path'] = path
+        if path != name:
+            e['json']['name'] = name
+
+    content = {
+        'json': jsonFromMeta(tree.meta),
+        'nog': tree,
+        'path': ''
+    }
+
+    def haveSortedUniquePaths(entries):
+        paths = [e['path'] for e in entries]
+        return (sorted(set(paths)) == paths)
+
+    if haveSortedUniquePaths(entries):
+        content['order'] = 'sorted'
+    else:
+        content['order'] = 'index'
+        content['json']['order'] = 'index'
+        for i, e in enumerate(entries):
+            e['json']['index'] = i
+    content['entries'] = entries
+
+    return content
+
+
+class UniquePather:
+
+    def __init__(self):
+        self._paths = set()
+
+    def uniquePath(self, path):
+        def isUnique(p):
+            return (p not in self._paths)
+        i = 2
+        stem, ext = os.path.splitext(path)
+        u = path
+        while not isUnique(u):
+            u = stem + '__' + str(i) + '__' + ext
+            i = i + 1
+        self._paths.add(u)
+        return u
+
+
+def isReservedName(name):
+    return name.endswith('.nog.json')
+
+
+# `fsSafeName()` replaces characters that would cause problems as paths.  It
+# accepts as much as possible, so that the one-to-one covers as many cases as
+# possible.
+#
+# XXX: consider reducing the set of accepted characters.
+def fsSafeName(name):
+    name = re.sub(r'[^\w\d._:@#()!+={}[\]|~*& -]', '_', name)
+    return name
+
+
+# Git's native format is seconds since unix epoch with timezone offset.  If the
+# input is a string, assume that it is in nog JSON format.  Use `timestamp()`
+# to get a correct unix timestamp; do not use `strftime('%s')`.
+def fmtGitDate(d):
+    if isinstance(d, str):
+        d = dateutil.parser.parse(d)
+    tzoffset = d.strftime('%z')
+    return '%d %s' % (int(d.timestamp()), tzoffset)
+
+
+# Format UTC with tz offset.
+def fmtNogDate(d):
+    return d.isoformat()
+
+
+# Helpers to call git (copied from `tools/bin/nog`).
+# TODO: remove unused ones.
+
+def gitCatCommit(c):
+    def mkdatetime(timestamp, offset):
+        sign = offset[0]
+        hours = int(sign + offset[1:3])
+        minutes = int(sign + offset[3:])
+        tz = timezone(timedelta(hours=hours, minutes=minutes))
+        return datetime.fromtimestamp(int(timestamp), tz)
+
+    # `rgxHeadBody` splits the content into the header (everything up to the
+    # first empty line) and the body (everything after the first empty line).
+    rgxHeaderBody = re.compile(
+        r'\A(.*?)\n^$\n(.*)\Z', re.MULTILINE | re.DOTALL)
+    rgxTree = re.compile(r'^tree ([0-9a-f]{40})$')
+    rgxParent = re.compile(r'^parent ([0-9a-f]{40})$')
+    rgxAuthor = re.compile(r'^author (.*>) ([0-9]+) ([+-][0-9]{4})$')
+    rgxCommitter = re.compile(r'^committer (.*>) ([0-9]+) ([+-][0-9]{4})$')
+
+    sha1 = gitRevParse(c)
+    for encoding in ('utf-8', 'latin-1', None):
+        if not encoding:
+            raise RuntimeError('Failed to decode commit message.')
+        try:
+            content = gitMultiline(['cat-file', 'commit', sha1], encoding)
+            break
+        except UnicodeDecodeError:
+            pass
+    m = rgxHeaderBody.match(content)
+    if not m:
+        raise RuntimeError('Failed to parse git cat-file commit.')
+    (header, message) = m.group(1, 2)
+    parents = []
+    for line in header.split('\n'):
+        m = rgxTree.match(line)
+        if m:
+            tree = m.group(1)
+            continue
+        m = rgxParent.match(line)
+        if m:
+            parents.append(m.group(1))
+            continue
+        m = rgxAuthor.match(line)
+        if m:
+            (author, timestamp, offset) = m.group(1, 2, 3)
+            authorDate = mkdatetime(timestamp, offset)
+            continue
+        m = rgxCommitter.match(line)
+        if m:
+            (committer, timestamp, offset) = m.group(1, 2, 3)
+            commitDate = mkdatetime(timestamp, offset)
+            continue
+        raise RuntimeError(
+            'Failed to parse git cat-file commit; unknown line `%s`.' % line)
+    return {
+        'sha1': sha1,
+        'tree': tree,
+        'parents': parents,
+        'author': author,
+        'authorDate': authorDate,
+        'committer': committer,
+        'commitDate': commitDate,
+        'message': message,
+        'encoding': encoding
+    }
+
+
+def nogTreeFromGitCommitId(gitRef):
+    gitTreeId = gitRevParse(gitRef + '^{tree}')
+    return nogTreeFromGitTreeId(gitTreeId)
+
+
+def nogTreeFromGitTreeId(treeSha1):
+    return _nogTreeFromGitTreeId(treeSha1)['tree']
+
+
+# Store git objects as `meta.content` if they can be decoded as utf-8 without
+# null chars.
+#
+# `meta.git.storage` is omitted so that (nog -> git -> nog) re-creates the
+# ideas.  It is only specified when necessary (`gitblob`).
+
+# TODO: factor into object, count hits and misses.
+_nogTreeMemos = {}
+
+
+def _nogTreeFromGitTreeId(treeSha1, defaultName=None):
+    defaultName = defaultName or ''
+    key = treeSha1 + defaultName
+    try:
+        tree = _nogTreeMemos[key]
+        # print('hit')
+    except KeyError:
+        # print('miss')
+        tree = _nogTreeFromGitTreeIdUncached(treeSha1, defaultName=defaultName)
+        _nogTreeMemos[key] = tree
+    return tree
+
+
+def _nogTreeFromGitTreeIdUncached(treeSha1, defaultName):
+    def stripNogJsonSuffix(s):
+        return s[:-len(NOG_JSON_SUFFIX)]
+
+    treeJson = {}
+    byPath = {}
+    for e in gitLsTree(treeSha1):
+        (ty, mode, sha1, path) = e
+        if path == NOG_TREE_JSON:
+            if ty != 'blob':
+                msg = 'Found non-blob `%s`.' % NOG_TREE_JSON
+                raise RuntimeError(msg)
+            treeJson = gitCatBlobJson(sha1)
+        elif path.endswith(NOG_JSON_SUFFIX):
+            if ty != 'blob':
+                msg = 'Found no-blob `*%s`.' % NOG_JSON_SUFFIX
+                raise RuntimeError(msg)
+            p = stripNogJsonSuffix(path)
+            byPath.setdefault(p, {})['nogjson'] = gitCatBlobJson(sha1)
+        elif ty == 'blob':
+            byPath.setdefault(path, {})['gitblob'] = sha1
+            if mode != '100644':
+                byPath[path]['mode'] = mode
+        elif ty == 'tree':
+            byPath[path] = _nogTreeFromGitTreeId(sha1, defaultName=path)
+        elif ty == 'commit':
+            byPath[path] = {'gitcommit': sha1}
+        elif ty == 'symlink':
+            byPath.setdefault(path, {})['gitblob'] = sha1
+            byPath[path]['mode'] = '120000'
+        else:
+            die(' '.join(['Cannot convert', treeSha1, ty, mode, path]))
+
+    for p, e in byPath.items():
+        e['path'] = p
+
+    order = treeJson.get('order', 'sorted')
+    entries = list(byPath.values())
+    if order == 'sorted':
+        entries.sort(key=lambda e: e['path'])
+    elif order == 'index':
+        entries.sort(key=lambda e: e['nogjson']['index'])
+    else:
+        raise RuntimeError('Invalid order `%s`.' % order)
+
+    # pprint(entries)  # TODO remove
+
+    tree = nog.Tree()
+    tree.name = treeJson.get('name', defaultName)
+    tree.meta.update(treeJson.get('meta', {}))
+    for e in entries:
+        etree = e.get('tree', None)
+        if etree:
+            tree.append(etree)
+            continue
+        nogjson = e.get('nogjson', {})
+        name = nogjson.get('name', e['path'])
+        # gitcommit here means that the git tree entry is a commit, which is
+        # git's low-level way of saying that it is a submodule.
+        gitcommit = e.get('gitcommit', None)
+        if gitcommit:
+            submodule = nog.Tree()
+            submodule.name = name
+            submodule.meta['git'] = {'commit': gitcommit}
+            tree.append(submodule)
+            continue
+        # TODO: check that path is safe.
+        obj = nog.Object()
+        idversion = nogjson.get('idversion', OBJECT_DEFAULT_IDVERSION)
+        obj.format(idversion)
+        obj.name = name
+        obj.meta.update(nogjson.get('meta', {}))
+        mode = e.get('mode', None)
+        if mode:
+            gitmeta = {'mode': mode}
+        else:
+            gitmeta = {}
+        blob = nogjson.get('blob', None)
+        gitblob = e.get('gitblob', None)
+        if blob:
+            # storage == 'nogblob' implied
+            obj.blob = blob
+            # XXX: this assumes that the blob has already been uploaded.
+            #
+            # TODO: from where read the nog blob data for the sha1?
+            #
+            # Ideas:
+            #
+            #  - We should have an option that works without git-silo.
+            #  - Assume that the blob is already available by implementing `git
+            #    nog add-blob` that immediately uploads the blob.
+            #  - Heuristic that detects local silo storage and takes it from
+            #    there.
+            #  - A `.git/nog` directory where `git nog add-blob` caches the
+            #    objects until upload.
+            #  - Alternatively, `git nog add-blob` could put them into
+            #    `NOG_CACHE_PATH`.
+
+            # obj.blob = NULL_SHA1
+        elif gitblob:
+            def decodeDat(dat):
+                if len(dat) > MAX_TEXT_SIZE:
+                    return None
+                try:
+                    text = dat.decode('utf-8', 'strict')
+                    if '\x00' in text:
+                        return None
+                    return text
+                except UnicodeDecodeError:
+                    return None
+            dat = gitCatBlob(gitblob)
+            text = decodeDat(dat)
+            if text is not None:
+                # storage == 'text' (implied)
+                obj.text = text
+            else:
+                obj.blob = dat
+                gitmeta['storage'] = 'gitblob'
+        else:
+            pass  # storage == 'none' (implied)
+        if gitmeta != {}:
+            obj.meta['git'] = gitmeta
+        tree.append(obj)
+
+    return {'nogjson': treeJson, 'tree': tree}
+
+
+def retry(fn):
+    for delay_s in retryDelays_s + (None,):
+        try:
+            return fn()
+        except (RuntimeError, ReadTimeout, ConnectionError) as err:
+            if not delay_s:
+                raise
+            print(err)
+            print('Retrying in %ds.' % delay_s)
+            sleep(delay_s)
+
+
+def gitCatBlob(sha1):
+    return gitRaw(['cat-file', 'blob', sha1])
+
+
+def gitCatBlobJson(sha1):
+    return json.loads(gitMultiline(['cat-file', 'blob', sha1]))
+
+
+# Use -f to override gitignore.
+def gitAdd(paths):
+    if type(paths) is str:
+        paths = [paths]
+    gitCheck(['add', '-f', '--'] + paths)
+
+
+def gitLsTree(tree):
+    res = gitMultiline(['ls-tree', '-z', tree])
+    if res == '':
+        return
+    for e in res[:-1].split('\x00'):
+        (info, path) = e.split('\t')
+        (mode, ty, sha1) = info.split(' ')
+        if mode == '120000':
+            ty = 'symlink'
+        yield (ty, mode, sha1, path)
+
+
+def gitLsTreeR(tree):
+    res = gitMultiline(['ls-tree', '-z', '-r', tree])
+    if res == '':
+        return
+    for e in res[:-1].split('\x00'):
+        (info, path) = e.split('\t')
+        (mode, ty, sha1) = info.split(' ')
+        if mode == '120000':
+            ty = 'symlink'
+        yield (ty, mode, sha1, path)
+
+
+def gitRevParse(name, quiet=False):
+    cmd = ['rev-parse', '--verify']
+    if quiet:
+        cmd.append('--quiet')
+    cmd.append(name)
+    try:
+        return gitLine(cmd)
+    except CalledProcessError:
+        if quiet:
+            return None
+        raise
+
+
+def gitUpdateRef(name, new, old):
+    if old is None:
+        old = '0000000000000000000000000000000000000000'
+    return gitLine(['update-ref', name, new, old])
+
+
+def gitCommitTree(tree, message, parents=None):
+    cmd = ['commit-tree']
+    for p in (parents or []):
+        cmd.append('-p')
+        cmd.append(p)
+    cmd.append('-m')
+    cmd.append(message)
+    cmd.append(tree)
+    return gitLine(cmd)
+
+
+def gitRaw(args):
+    if type(args) is str:
+        args = args.split(' ')
+    return check_output(['git'] + args)
+
+
+def gitMultiline(args, encoding=None):
+    encoding = encoding or 'utf-8'
+    if type(args) is str:
+        args = args.split(' ')
+    return check_output(['git'] + args).decode(encoding)
+
+
+def gitLine(args, stderr=None):
+    if type(args) is str:
+        args = args.split(' ')
+    res = check_output(['git'] + args, stderr=stderr)
+    return res.decode('utf-8').rstrip('\n')
+
+
+def gitCheck(args):
+    if type(args) is str:
+        args = args.split(' ')
+    return check_call(['git'] + args)
+
+
+def gitCommitExists(c):
+    return gitCode(['cat-file', '-e', c]) == 0
+
+
+def gitCode(args):
+    if type(args) is str:
+        args = args.split(' ')
+    return call(['git'] + args)
+
+
+def gitHashObject(dat):
+    cmd = ('git', 'hash-object', '-w', '--stdin')
+    with subprocess.Popen(cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE) as child:
+        (out, err) = child.communicate(input=dat)
+        if child.returncode != 0 or len(err) > 0:
+            raise RuntimeError('Failed to `git hash-object`.')
+    return out.decode('utf-8').rstrip()
+
+
+def gitMktree(dat):
+    if len(dat) > 0:
+        lines = ('%s %s %s\t%s' % d for d in dat)
+        inp = ('\n'.join(lines) + '\n').encode('utf-8')
+    else:
+        inp = bytes()
+    cmd = ('git', 'mktree')
+    with subprocess.Popen(cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE) as child:
+        (out, err) = child.communicate(input=inp)
+        if child.returncode != 0 or len(err) > 0:
+            raise RuntimeError('Failed to `git mktree`.')
+    return out.decode('utf-8').rstrip()
+
+
+def iterNogJsons():
+    return gitLsFiles(['--', '*' + NOG_JSON_SUFFIX])
+
+
+def gitLsFiles(args=None):
+    args = args or []
+    res = gitMultiline(['ls-files', '-z'] + args)
+    for p in res[:-1].split('\x00'):
+        yield p
+
+
+def stringify_pretty(d):
+    return json.dumps(d, sort_keys=True, ensure_ascii=False, indent=2) + '\n'
+
+
+def die(msg):
+    sys.stderr.write('Error: ')
+    sys.stderr.write(msg)
+    sys.stderr.write('\n')
+    exit(1)
+
+main()

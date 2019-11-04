@@ -1,0 +1,27 @@
+[submodule "packages/mocha-package"]
+	path = packages/mocha-package
+	url = https://github.com/sprohaska/meteor-mocha-web.git
+[submodule "packages/flow-router"]
+	path = packages/flow-router
+	url = https://github.com/sprohaska/flow-router.git
+[submodule "packages/picker"]
+	path = packages/picker
+	url = https://github.com/sprohaska/picker.git
+[submodule "packages/meteor-accounts-oidc"]
+	path = packages/meteor-accounts-oidc
+	url = https://github.com/nogproject/meteor-accounts-oidc
+[submodule "backend/t/sharness"]
+	path = backend/t/sharness
+	url = https://github.com/chriscool/sharness.git
+[submodule "packages/meteor-blaze-components"]
+	path = packages/meteor-blaze-components
+	url = https://github.com/nogproject/meteor-blaze-components.git
+[submodule "packages/meteor-base-component"]
+	path = packages/meteor-base-component
+	url = https://github.com/nogproject/meteor-base-component.git
+[submodule "packages/meteor-job-collection"]
+	path = packages/meteor-job-collection
+	url = https://github.com/nogproject/meteor-job-collection.git
+[submodule "packages/cosmos-browserify"]
+	path = packages/cosmos-browserify
+	url = https://github.com/nogproject/cosmos-browserify.git

@@ -1,0 +1,941 @@
+#!/usr/bin/env python3
+
+"""nog package manager
+
+Usage:
+  nogpm install [--registry <registry>] [--local] <nogpackages>...
+  nogpm install [--local]
+  nogpm install --frozen
+  nogpm link [--local]
+  nogpm freeze
+  nogpm publish [--registry <registry>] [--force]
+  nogpm pull [--registry <registry>] [--dry-run] [<glob>]
+  nogpm resolve [--local] <nogpackage>
+  nogpm resolve [--local] --list
+
+Options:
+  -h --help     Print help.
+
+  --registry <registry>
+                Use `<registry>` (a full repo name `<owner>/<repo>`) instead of
+                the default.  See 'Registry, Programs, and Protocols' below.
+
+  -f --force    Force re-publishing the current package version
+
+  -n --dry-run  Print what would be done.
+
+  --list        List packages with their version and path.
+
+  --local       Ignore packages in parent directories; install will re-install
+                a package in the local `nogpackages` if necessary.
+
+  --frozen      Install dependencies from the frozen list.  It implies
+                `--local`.
+
+# Commands
+
+`nogpm install` installs packages by downloading them from a registry.  The
+default registry is `nog/packages`.  If no packages are specified on the
+command line, `install` tries to load `nogpackages.json` and install its
+dependencies.  A nogpackage can be specified as `<name>@<version>` to install a
+specific version.
+
+`nogpm install --frozen` installs the packages exactly as specified in the
+frozen list in `nogpackage.json`, ignoring the dependencies section.  The
+rational is similar to npm's shrinkwrap: If the frozen list has been correctly
+constructed from the current dependencies, then it implies that all
+dependencies will be correcly resolved.
+
+`nogpm link` creates symlinks to the code in the dependencies so that they
+appear to be available in the toplevel directory.
+
+`nogpm freeze` updates the list of frozen versions in `nogpackage.json` based
+on the locally installed packages.  Freeze is used to lock the dependencies of
+toplevel programs, so that they can be executed as a nog job (the `nogpm
+publish` will attach the frozen packages and the execution daemon will unpack
+them to create a complete program).  Freeze should not be used on a package
+that serves as a library, such as `nogpy`, since the meaning of packages to
+which frozen packages are recursively attached to is yet unclear.
+
+`nogpm publish` publishes a new package bundle to the specified registry.  It
+expects a `nogpackage.json` in the current directory, which describes either a
+program or a protocol package.  For programs, the frozen packages will be
+attached to the published package tree in order to create a complete,
+self-contained program for nog job execution.
+
+`nogpm pull` copies published versions from other registries.  The default is
+to copy the current version as configured in `nogpackage.json` from one of the
+alternates. `<glob>` can be specified to select other versions.  Examples:
+
+ - `*`: All versions, excluding prereleases.
+ - `*-*`: All versions, including prereleases.
+ - `1.*`: All 1.x versions, excluding prereleases.
+ - `1.*-*`: All 1.x versions, including prereleases.
+
+`nogpm resolve` tries to locate a package starting from the current working
+directory.  It prints the absolute path to the local package directory if
+successful.  It prints nothing and exits with a non-zero return code if it
+fails to locate the package.  Packages are searched at the following locations:
+
+ - The current working directory itself.
+ - Subfolders `nogpackages/*/` in the current and all parent directories.
+
+# Registry, Programs, and Protocols
+
+A package is a program if it has a dict `nogpackage.program`.  It is a protocol
+if it has a dict `nogpackage.protocol`.  A package must be either of the two
+kinds.  The primary purpose of `nogpm` is to manage programs.  For protocols,
+only `nogpm publish` is supported.
+
+`nogpm publish` supports programs and protocols.  The default registry is
+`nogpackage.programRegistry` for programs and `nogpackage.protocolRegistry` for
+protocols.  Registry URLs may contain a host, like `nog.zib.de/nog/packages`.
+Nogpm verifies that the host matches the current NOG_API_URL.
+
+A list of alternate registries can be specified in
+`nogpackage.programRegistryAlt` or `nogpackage.protocolRegistryAlt`.  Nogpm
+selects the registry for the current NOG_USERNAME and NOG_API_URL.
+
+`nogpm install` only supports programs.  The `programRegistry` can be specified
+in a dependency.  The default registry is `nog/packages`.
+
+A program registry is a repo whose root tree has a dict `meta.programRegistry`
+and a toplevel subtree `programs` with a dict `meta.programs`.
+
+A protocol registry is a repo whose root tree has a dict
+`meta.protocolRegistry` and a toplevel subtree `protocols` with a dict
+`meta.protocols`.
+
+# Semver
+
+Semantic versions are specified as a dict `version` with keys `major`, `minor`,
+`patch`, and an optional `prerelease`, which should be a string.  For example,
+semver `1.0.2-0` would be specified as:
+
+```json
+{
+    "package": {
+        "version": { "major": 1, "minor": 0, "patch": 2, "prerelease": "0" } }
+    }
+}
+```
+
+"""
+
+
+from copy import copy
+from datetime import datetime
+from docopt import docopt
+from io import BytesIO
+from operator import itemgetter
+from os import environ
+from sys import stdout
+from urllib.parse import urlparse
+import json
+import nog
+import nogresolve
+import os
+import os.path
+import re
+import sys
+import tarfile
+import yaml
+
+
+def main():
+    args = docopt(__doc__)
+    cmds = {
+        'freeze': cmdFreeze,
+        'install': cmdInstall,
+        'link': cmdLink,
+        'publish': cmdPublish,
+        'pull': cmdPull,
+        'resolve': cmdResolve,
+    }
+    for name, cmd in cmds.items():
+        if args[name]:
+            return cmd(args)
+    die('Command not implemented.')
+
+
+def cmdResolve(args):
+    arg_nogpackage = args['<nogpackage>']
+    opt_list = args['--list']
+    opt_local = args['--local']
+
+    resolver = nogresolve.Resolver()
+    if opt_local:
+        resolver.addWithLocal(os.getcwd())
+    else:
+        resolver.addWithParents(os.getcwd())
+
+    if opt_list:
+        fmt = '{0}@{1}: {2}'
+        for name, p in resolver.registry.items():
+            print(fmt.format(p['package']['name'],
+                             fmtVersion(p['package']['version']),
+                             p['localpath']))
+        return
+
+    try:
+        print(resolver.resolve(arg_nogpackage))
+    except KeyError:
+        exit(1)
+
+
+def cmdInstall(args):
+    opt_frozen = args['--frozen']
+    if opt_frozen:
+        return cmdInstallFrozen(args)
+
+    arg_nogpackages = args['<nogpackages>']
+    if len(arg_nogpackages):
+        opt_registry = args['--registry']
+        if opt_registry:
+            reg = opt_registry
+        else:
+            reg = 'nog/packages'
+        packages = []
+        for p in arg_nogpackages:
+            packages.append((p, reg))
+    else:
+        print('Installing nogpackage dependencies...')
+        with open('nogpackage.json') as fp:
+            nogpackage = json.load(fp)
+        packages = []
+        for d in nogpackage['package'].get('dependencies', []):
+            reg = d.get('programRegistry', 'nog/packages')
+            packages.append((d['name'], reg))
+
+    opt_local = args['--local']
+    resolver = nogresolve.Resolver()
+    if opt_local:
+        resolver.addWithLocal(os.getcwd())
+    else:
+        resolver.addWithParents(os.getcwd())
+
+    for p in packages:
+        (package, reg) = p
+        nameAndVersion = package.split('@')
+        if len(nameAndVersion) == 1:
+            installPackage(resolver, reg, nameAndVersion[0])
+        elif len(nameAndVersion) == 2:
+            (name, version) = nameAndVersion
+            installPackage(resolver, reg, name, version=version)
+        else:
+            raise RuntimeError('Invalid package name `{0}`.'.format(package))
+
+
+def cmdInstallFrozen(args):
+    print('Installing frozen nogpackage dependencies...')
+    with open('nogpackage.json') as fp:
+        nogpackage = json.load(fp)
+
+    resolver = nogresolve.Resolver()
+    resolver.addWithLocal(os.getcwd())
+
+    for froz in nogpackage['package'].get('frozen', []):
+        registry = froz['programRegistry']
+        installPackage(resolver, registry, froz['name'],
+                       version=fmtVersion(froz), installDeps=False)
+
+
+def repoFullNameFromURL(url):
+    # The last two parts.
+    parts = url.split('/')
+    return '/'.join(parts[-2:])
+
+
+# `version` is a string as returned by `fmtVersion()`.
+def installPackage(resolver, registryRepo, name, version=None,
+                   installDeps=True, indent=''):
+    (remote, master) = openProgramsRepo(registryRepo)
+    root = master.tree
+    programs = next(root.trees('programs'))
+    try:
+        localpath = resolver.resolve(name)
+    except KeyError:
+        localpath = None
+    if localpath:
+        installedVer = resolver.registry[name]['package']['version']
+        installedVer = fmtVersion(installedVer)
+        if version and version != installedVer:
+            msg = ('Requested {0}@{1}, '
+                   'but conflicting `{2}@{3}` already available at `{4}`.')
+            msg = msg.format(name, version, name, installedVer, localpath)
+            raise RuntimeError(msg)
+        msg = indent + '`{0}@{1}` already available at `{2}`.'
+        print(msg.format(name, installedVer, localpath))
+        return
+
+    if version:
+        try:
+            ptree = next(programs.trees(name))
+            latest = next(ptree.trees(name + '@' + version))
+        except StopIteration:
+            msg = 'Failed to find package `{0}@{1}` in registry `{2}`.'
+            raise RuntimeError(msg.format(name, version, remote.url))
+    else:
+        try:
+            ptree = next(programs.trees(name))
+            latest = next(ptree.trees())
+        except StopIteration:
+            msg = 'Failed to find package `{0}` in registry `{1}`.'
+            raise RuntimeError(msg.format(name, remote.url))
+
+    destdir = 'nogpackages/' + name
+    if os.path.exists(destdir):
+        msg = 'Local path `{0}` already exists.'
+        raise RuntimeError(msg.format(destdir))
+    os.makedirs(destdir)
+
+    package = latest.meta['package']
+    for ar in package['content']['archives']:
+        tar = remote.getObject(ar['sha1'])
+        with tar.openBlob() as fp:
+            with tarfile.open(fileobj=fp, mode='r:xz') as tarfp:
+                tarfp.extractall(path=destdir)
+
+    # Save install-specific information to the installed package.  XXX Freeze
+    # will use it.
+    with open(destdir + '/nogpackage.json') as fp:
+        nogpackage = json.load(fp)
+    nogpackage['programRegistry'] = repoFullNameFromURL(remote.url)
+    nogpackage['package']['version']['sha1'] = latest.sha1
+    with open(destdir + '/nogpackage.json', 'w') as fp:
+        fp.write(stringify_pretty(nogpackage))
+
+    msg = indent + '`{0}@{1}` installed into `{2}`.'
+    print(msg.format(package['name'], fmtVersion(package['version']),
+                     destdir))
+    resolver.addPackage(destdir)
+
+    if not installDeps:
+        return
+
+    deps = package.get('dependencies', None)
+    if not deps:
+        return
+    print(indent + 'Installing dependencies...')
+    for d in deps:
+        depname = d['name']
+        depreg = d.get('programRegistry', 'nog/packages')
+        installPackage(resolver, depreg, depname, indent=indent + '  ')
+
+
+def cmdLink(args):
+    opt_local = args['--local']
+
+    with open('nogpackage.json') as fp:
+        nogpackage = json.load(fp)
+
+    resolver = nogresolve.Resolver()
+    if opt_local:
+        resolver.addWithLocal(os.getcwd())
+    else:
+        resolver.addWithParents(os.getcwd())
+
+    linkDependencies(resolver, nogpackage)
+
+
+# Traverse in depth-first order so that dependencies closer to the top win.
+def linkDependencies(resolver, pkg, indent=''):
+    print(indent + pkg['package']['name'])
+    for d in pkg['package'].get('dependencies', []):
+        rname = d['name']
+        rpkg = resolver.registry[rname]
+        linkDependencies(resolver, rpkg, indent=indent + '  ')
+        rdir = rpkg['localpath']
+        try:
+            files = rpkg['program']['code']['files']
+        except KeyError:
+            return
+        for f in files:
+            rf = os.path.relpath(rdir + '/' + f)
+            print(indent + '  {0}: {1} -> {2}'.format(rname, f, rf))
+            destdir = os.path.dirname(f)
+            if destdir != '' and not os.path.exists(destdir):
+                os.makedirs(destdir)
+            if os.path.lexists(f):
+                os.remove(f)
+            os.symlink(rf, f)
+
+
+def cmdFreeze(args):
+    with open('nogpackage.json') as fp:
+        nogpackage = json.load(fp)
+
+    resolver = nogresolve.Resolver()
+    resolver.addLocal(os.getcwd())
+
+    frozen = []
+    for name, dep in resolver.registry.items():
+        ver = copy(dep['package']['version'])
+        ver['name'] = name
+        ver['programRegistry'] = dep['programRegistry']
+        frozen.append(ver)
+    nogpackage['package']['frozen'] = frozen
+
+    with open('nogpackage.json', 'w') as fp:
+        fp.write(stringify_pretty(nogpackage))
+
+    print('Updated `nogpackage.json`.')
+
+
+def cmdPublish(args):
+    opt_registry = args['--registry']
+    opt_force = args['--force']
+    with open('nogpackage.json') as fp:
+        nogpackage = json.load(fp)
+
+    if 'program' in nogpackage and 'protocol' in nogpackage:
+        raise RuntimeError(
+            'The package cannot be of kind `program` and `protocol` at the ' +
+            'same time.'
+        )
+
+    if 'program' in nogpackage:
+        kind = 'program'
+        locations = {
+            'primary': nogpackage['programRegistry'],
+            'alts': nogpackage.get('programRegistryAlt'),
+        }
+    elif 'protocol' in nogpackage:
+        kind = 'protocol'
+        locations = {
+            'primary': nogpackage['protocolRegistry'],
+            'alts': nogpackage.get('protocolRegistryAlt'),
+        }
+    else:
+        raise RuntimeError('Unknown package kind.')
+
+    if opt_registry:
+        registry = opt_registry
+    else:
+        registry = selectRegistry(**locations)
+
+    print('nogpackage', stringify_pretty(nogpackage))
+    print('publishing to registry `{}`...'.format(registry))
+
+    remote, master, root, packagesTree = openRegistryTree(registry, kind)
+
+    package = nogpackage['package']
+    ptree = next(packagesTree.trees(package['name']), None)
+    if not ptree:
+        ptree = nog.Tree()
+        ptree.name = package['name']
+        packagesTree.insert(0, ptree)
+    ptree.meta['description'] = package['description']
+    ptree.meta['package'] = {
+        'name': package['name'],
+        'description': package['description'],
+        'authors': package['authors']
+    }
+
+    # Add package version.
+    pkg = nog.Tree()
+    (verdict, verstring) = parseVersion(package['version'])
+    package['version'] = verdict
+    pkg.name = package['name'] + '@' + verstring
+
+    if not opt_force:
+        if altHasVersion(locations, kind, package['name'], verdict, verstring):
+            print(
+                'Use `pull` to copy alternate versions ' +
+                'or --force to (re-)publish anyway.'
+            )
+            exit(1)
+
+    if versionExists(ptree, verdict, verstring):
+        if not opt_force:
+            raise RuntimeError('Version {0} already published.'
+                               .format(verstring))
+        if verstring in currentVersion(ptree):
+            ptree.pop(0)
+        else:
+            raise RuntimeError(nog._denl("""
+                    Cannot re-publish, the current version does not match:
+                    expected '{0}', got '{1}'.
+                """).format(currentVersion(ptree), pkg.name))
+
+    pkg.meta['description'] = package['description']
+    pkg.meta['package'] = package
+    try:
+        path = package['readme']
+        o = nog.Object()
+        o.name = 'README.md'
+        with open(path, 'rb') as fp:
+            o.text = fp.read().decode('utf-8')
+        pkg.append(o)
+    except KeyError:
+        pass
+
+    content = package.get('content', {})
+    pkg.meta['package']['content'] = content
+
+    # Also set kinds `program` or `protocol` as meta.  Empty dicts are
+    # acceptable as a kind tags.
+
+    program = nogpackage.get('program', None)
+    if program is not None:
+        pkg.meta['program'] = program
+
+    protocol = nogpackage.get('protocol', None)
+    if protocol is not None:
+        pkg.meta['protocol'] = protocol
+
+    # The package can declare objects and files.  Objects are created in order.
+    # Files are added to `content.tar`.
+    #
+    # Trees could in principle be supported in the same way as objects.  But
+    # they are not yet provided, because we think that a simple, flat package
+    # structure with a few objects and a `content.tar` is sufficient.
+    #
+    # The full package content implicitly includes the package spec, the
+    # readme, any file that is read for creating objects, and the specified
+    # non-code and code files.
+
+    files = set()
+    files.add('nogpackage.json')
+    if 'readme' in package:
+        files.add(package['readme'])
+
+    for o in content.get('objects', []):
+        obj = nog.Object()
+        pkg.append(obj)
+
+        blob = o.get('blob', None)
+        text = o.get('text', None)
+        path = o.get('path', None)
+        if (blob is not None) + (text is not None) + (path is not None) != 1:
+            msg = (
+                'package.content.objects must specify exactly one of '
+                '`blob`, `text`, or `path`.'
+            )
+            raise RuntimeError(msg)
+
+        if blob:
+            obj.name = blob
+            obj.blob = blob
+            files.add(blob)
+        elif text:
+            obj.name = text
+            with open(text, 'rb') as fp:
+                obj.text = fp.read().decode('utf-8')
+            files.add(text)
+        elif path:
+            obj.name = path
+        else:
+            raise RuntimeError('Logic error')
+
+        m = o.get('meta', None)
+        if m is None:
+            pass
+        elif isinstance(m, dict):
+            obj.meta.update(m)
+        elif m.endswith('.json'):
+            with open(m, 'r') as fp:
+                obj.meta.update(json.load(fp))
+            files.add(m)
+        elif m.endswith('.yml'):
+            with open(m, 'r') as fp:
+                obj.meta.update(yaml.safe_load(fp))
+            files.add(m)
+        else:
+            msg = (
+                'Unknown package.content.objects.meta format: '
+                'must be dict, `<path>.json`, or `<path>.yml`.'
+            )
+            raise RuntimeError(msg)
+
+    try:
+        files.update(content['files'])
+    except KeyError:
+        pass
+
+    if program:
+        try:
+            files.update(program['code']['files'])
+        except KeyError:
+            pass
+
+    # Upload the package content.
+    buf = BytesIO()
+    with tarfile.open(name='content.tar.xz', fileobj=buf, mode='w:xz',
+                      dereference=True) as tar:
+        for f in files:
+            tar.add(f)
+    ar = nog.Object()
+    ar.name = 'content.tar.xz'
+    ar.blob = buf.getvalue()
+    pkg.append(ar)
+    content['archives'] = [{'name': ar.name, 'sha1': ar.sha1}]
+
+    # If the package defines a program, upload the code as a separate
+    # `code.tar` in addition to `content.tar`.
+    if program:
+        buf = BytesIO()
+        with tarfile.open(name='code.tar.xz', fileobj=buf, mode='w:xz',
+                          dereference=True) as tar:
+            for f in program['code']['files']:
+                tar.add(f)
+        ar = nog.Object()
+        ar.name = 'code.tar.xz'
+        ar.blob = buf.getvalue()
+        pkg.append(ar)
+        program['code']['archives'] = [{'name': ar.name, 'sha1': ar.sha1}]
+
+    # Attach the frozen packages, so that the published package tree is a
+    # self-contained program for nog job execution.
+    #
+    # XXX Frozen packages are assumed to be programs.  Dependency handling for
+    # protocols is not yet supported.
+    for froz in package.get('frozen', []):
+        frozreg = froz['programRegistry']
+        (frozremote, _) = openProgramsRepo(frozreg)
+        pkg.append(frozremote.getTree(froz['sha1']))
+
+    ptree.insert(0, pkg)
+    subject = "Publish {kind} package `{name}`".format(
+        kind=kind, name=pkg.name
+    )
+    master = remote.commitTree(
+        subject=subject, tree=root, parent=master.sha1
+    )
+    print(master.sha1, stringify_pretty(master.content))
+
+
+def cmdPull(args):
+    opt_registry = args['--registry']
+    opt_dry_run = args['--dry-run']
+    with open('nogpackage.json') as fp:
+        nogpackage = json.load(fp)
+
+    if 'program' in nogpackage and 'protocol' in nogpackage:
+        raise RuntimeError(
+            'The package cannot be of kind `program` and `protocol` at the ' +
+            'same time.'
+        )
+
+    if 'program' in nogpackage:
+        kind = 'program'
+        locations = {
+            'primary': nogpackage['programRegistry'],
+            'alts': nogpackage.get('programRegistryAlt'),
+        }
+    elif 'protocol' in nogpackage:
+        kind = 'protocol'
+        locations = {
+            'primary': nogpackage['protocolRegistry'],
+            'alts': nogpackage.get('protocolRegistryAlt'),
+        }
+    else:
+        raise RuntimeError('Unknown package kind.')
+
+    if opt_registry:
+        registry = opt_registry
+    else:
+        registry = selectRegistry(**locations)
+
+    print('Pulling to registry `{}`...'.format(registry))
+
+    package = nogpackage['package']
+    (verdict, verstring) = parseVersion(package['version'])
+
+    verglob = args['<glob>']
+    if not verglob:
+        verglob = verstring
+
+    lst = listVersions(locations, kind, package['name'], verglob)
+    if len(lst) == 0:
+        print('No candidates found.')
+        exit(1)
+
+    remote, master, root, packagesTree = openRegistryTree(registry, kind)
+    ptree = next(packagesTree.trees(package['name']), None)
+    if not ptree:
+        ptree = nog.Tree()
+        ptree.name = package['name']
+        packagesTree.insert(0, ptree)
+
+    nCopied = 0
+    reported = set()
+    for l in sorted(lst, key=itemgetter('name')):
+        entry = l['entry']
+        ver = entry.meta.get('package', {}).get('version', None)
+        if not ver:
+            continue
+        (verdict, verstring) = parseVersion(ver)
+        if versionExists(ptree, verdict, verstring):
+            if verstring not in reported:
+                print('{}: already up-to-date.'.format(verstring))
+                reported.add(verstring)
+            continue
+        ptree.insert(0, entry)
+        print('{}: copying from `{}`.'.format(verstring, l['registry']))
+        nCopied += 1
+
+    if nCopied == 0:
+        print('All versions already up-to-date.')
+        exit(0)
+
+    if opt_dry_run:
+        print('Not committing during dry run.')
+        exit(0)
+
+    subject = "Pulled {kind} package `{name}@{verglob}`".format(
+        kind=kind, name=package['name'], verglob=verglob
+    )
+    master = remote.commitTree(
+        subject=subject, tree=root, parent=master.sha1
+    )
+    print(master.sha1, stringify_pretty(master.content))
+
+
+def listVersions(locations, kind, name, verglob):
+    lst = []
+    rgx = compileVersionGlob(verglob)
+    for r in selectCurrentApiRegistries(**locations):
+        print('Searching `{}`...'.format(r), end='')
+        stdout.flush()
+        _, _, _, packagesTree = openRegistryTree(r, kind)
+        ptree = next(packagesTree.trees(name), None)
+        if not ptree:
+            continue
+        nMatch = 0
+        for t in ptree.trees():
+            if not rgx.match(t.name):
+                continue
+            lst.append({'registry': r, 'name': t.name, 'entry': t})
+            nMatch += 1
+        msg = ' {} candidate{s}.'
+        print(msg.format(nMatch, s=('s' if nMatch != 1 else '')))
+    return lst
+
+
+# `compileVersionGlob()` returns a regex object for a version glob pattern.
+# See usage for glob examples.
+#
+# `*` matches at least one non-dash.
+# `-` must be explicit.
+# `.` matches an ordinary dot.
+#
+def compileVersionGlob(verglob):
+    r = verglob
+    r = r.replace('.', '[.]')
+    r = r.replace('*', '[^-]+')
+    r = '^.*@{}$'.format(r)
+    return re.compile(r)
+
+
+def currentVersion(ptree):
+    try:
+        name = next(ptree.trees()).name
+    except StopIteration:
+        name = None
+    return name
+
+
+def versionExists(ptree, verdict, verstring):
+    for e in ptree.entries():
+        if e.name.endswith('@{}'.format(verstring)):
+            return True
+        if e.meta['package']['version'] == verdict:
+            return True
+    return False
+
+
+def altHasVersion(locations, kind, name, verdict, verstring):
+    isPublished = False
+    for r in selectCurrentApiRegistries(**locations):
+        _, _, _, packagesTree = openRegistryTree(r, kind)
+        ptree = next(packagesTree.trees(name), None)
+        if not ptree:
+            continue
+        if not versionExists(ptree, verdict, verstring):
+            continue
+        print('Version {} already published to `{}`.'.format(verstring, r))
+        isPublished = True
+    return isPublished
+
+
+def openRegistryTree(url, kind):
+    (remote, master) = openProgramsRepo(url)
+    root = master.tree
+    packagesTree = next(root.trees('{}s'.format(kind)))
+    return remote, master, root, packagesTree
+
+
+# Memoize open repos to avoid repeated calls to remote in operations that may
+# access several repos, such as `install --frozen`.
+
+def memoizingFunc(fn):
+    from functools import wraps
+    cache = {}
+
+    @wraps(fn)
+    def wrapped(*args):
+        if args not in cache:
+            cache[args] = fn(*args)
+        return cache[args]
+
+    return wrapped
+
+
+def openProgramsRepo(url):
+    remote, master = openRegistry(url)
+    root = master.tree
+    if 'programRegistry' not in root.meta:
+        raise RuntimeError('Repo is not of kind `programRegistry`.')
+    programs = next(root.trees('programs'), None)
+    if not programs:
+        raise RuntimeError('Missing `programs` tree in registry.')
+    if 'programs' not in programs.meta:
+        raise RuntimeError('`programs` tree is not of kind `programs`.')
+    return (remote, master)
+
+
+openProgramsRepo = memoizingFunc(openProgramsRepo)
+
+
+def openProtocolRegistry(url):
+    remote, master = openRegistry(url)
+    root = master.tree
+    if 'protocolRegistry' not in root.meta:
+        raise RuntimeError('Repo is not of kind `protocolRegistry`.')
+    protocols = next(root.trees('protocols'), None)
+    if not protocols:
+        raise RuntimeError('Missing `protocols` tree in registry.')
+    if 'protocols' not in protocols.meta:
+        raise RuntimeError('`protocols` tree is not of kind `protocols`.')
+    return (remote, master)
+
+
+openProtocolRegistry = memoizingFunc(openProtocolRegistry)
+
+
+def selectRegistry(primary, alts=None):
+    alts = alts or []
+    user = environ['NOG_USERNAME']
+    nogHost = urlparse(environ['NOG_API_URL']).netloc
+
+    for url in [primary] + alts:
+        host, repo = parseRegistryUrl(url)
+        owner, name = repo.split('/')
+        if owner != user:
+            continue
+        if host and host != nogHost:
+            continue
+        return url
+
+    raise RuntimeError('No eligible registry for {}@{}'.format(user, nogHost))
+
+
+def selectCurrentApiRegistries(primary, alts=None):
+    alts = alts or []
+    nogHost = urlparse(environ['NOG_API_URL']).netloc
+    regs = []
+    for url in [primary] + alts:
+        host, repo = parseRegistryUrl(url)
+        if host and host != nogHost:
+            continue
+        regs.append(url)
+    return regs
+
+
+def openRegistry(url):
+    host, repo = parseRegistryUrl(url)
+    if host:
+        checkApiUrl(host)
+    remote = nog.openRepo(repo)
+    master = remote.getMaster()
+    return remote, master
+
+
+def checkApiUrl(host):
+    nogHost = urlparse(environ['NOG_API_URL']).netloc
+    if host != nogHost:
+        msg = 'Mismatch between registry host `{}` and NOG_API_URL host `{}`.'
+        raise RuntimeError(msg.format(host, nogHost))
+
+
+def parseRegistryUrl(url):
+    xs = {
+        'dir': '[a-zA-Z0-9_-]+',
+        'host': '[a-zA-Z0-9_.-]+',
+        'port': '(?::[0-9]+)',
+    }
+
+    withOwner = '^{dir}/{dir}$'.format(**xs)
+    if re.match(withOwner, url):
+        return None, url
+
+    withHost = '^({host}{port}?)/({dir}/{dir})$'.format(**xs)
+    m = re.match(withHost, url)
+    if m:
+        return m.group(1), m.group(2)
+
+    raise RuntimeError('Invalid registry URL `{}`.'.format(url))
+
+
+# Version formatting should be extended to to handle semver reasonably well.
+
+def parseVersion(ver):
+    ver, semver = parseSemver(ver)
+    if semver:
+        return (ver, semver)
+    if ver['date'] == 'now':
+        ver = copy(ver)
+        ver['date'] = datetime.utcnow().strftime('%Y-%m-%dT%H%M%SZ')
+    return (ver, ver['date'])
+
+
+def fmtVersion(ver):
+    ver, semver = parseSemver(ver)
+    if semver:
+        return semver
+    return ver['date']
+
+
+# XXX `tag` is accepted for backward compatibility.  The preferred key is
+# `prerelease`, following the convention of the Python `semver` package.
+#
+# If `prerelease` is null or an empty string, it will be ignored and removed
+# from the returned `ver` dict, so that the irrelevant `prerelease` does not
+# appear in the published tree `package.version`.
+
+def parseSemver(ver):
+    try:
+        semver = '.'.join(
+            (str(ver['major']), str(ver['minor']), str(ver['patch']))
+        )
+    except KeyError:
+        return (None, None)
+
+    if 'prerelease' in ver:
+        prerelease = ver['prerelease']
+        # Do not use a simple falsy tests `if not prerelease`.  The number `0`
+        # should pass as a valid `prerelease`.
+        if prerelease is None or str(prerelease) == '':
+            ver = copy(ver)
+            del ver['prerelease']
+        else:
+            semver = '{}-{}'.format(semver, prerelease)
+    elif 'tag' in ver:
+        semver = '{}-{}'.format(semver, ver['tag'])
+
+    return (ver, semver)
+
+
+def stringify_pretty(d):
+    return json.dumps(d, sort_keys=True, ensure_ascii=False, indent=2) + '\n'
+
+
+def die(msg):
+    sys.stderr.write('Error: ')
+    sys.stderr.write(msg)
+    sys.stderr.write('\n')
+    exit(1)
+
+
+main()

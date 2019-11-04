@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+
+"""
+Usage: gitlfsnogd
+
+`gitlfsnogd` implements the Git LFS v1 Batch API
+<https://github.com/github/git-lfs/blob/master/docs/api/http-v1-batch.md> on
+`localhost:5000` and uses Nog as its storage backend.  It stores LFS objects in
+nog into the repo that is part of the Git LFS URL at
+`_lfs/x<oid01>/x<oid23>/x<oid4...>` and sets `meta.sha256: <oid>` on the
+storage objects, so that nog search can be used to locate them by LFS oid.
+
+Gitlfsnogd stores batches of LFS objects to the local filesystem before it
+uploads them to Nog, primarily because Nog needs to compute sha1s, while Git
+LFS uses sha256.  The upload to Nog happens on the Git LFS PUT that completes
+the batch.
+
+Gitlfsnogd uses information from the environment to authenticate with Nog.  A
+separate Gitlfsnogd is required for each Nog user, because the environment can
+contain credentials only for a single user.
+
+Gitlfsnogd proxies downloads and serves them from the local Nog cache at
+`NOG_CACHE_PATH` to save S3 download bandwidth.
+
+We intent to permanently run a Gitlfsnogd for the studio demos at an endpoint
+that is only visible to the Visual subnet.  All Visuals could use it.
+Gitlfsnogd would safely store the LFS objects in Nog, but serve them from its
+local cache.  We could easily operate it as an OpenStack VM with the right
+firewall rules.  The solution should probably use DNS to ge a nice URL that can
+would be configured in the demo repo, so that everything just works.  The URL
+could be `http://gitlfsnogd.zib.de/visual/demos`, assuming a separate nog
+account 'visual'.
+
+Futher ideas:
+
+ - Immediately start upload object of a batch in the background to hide the
+   latency caused by storing the data to a local file first.  This might be
+   difficult to implement in Python, since it requires async operations.
+
+Example:
+
+```
+mkdir _gitlfsnogupload
+declare -x NOG_API_URL="https://nog.zib.de/api"
+declare -x NOG_USERNAME="sprohaska"
+declare -x NOG_CACHE_PATH="/Users/bzfproha/tmp/nogcache"
+declare -x NOG_KEYID="..."
+declare -x NOG_SECRETKEY="..."
+
+( cd /path/to/lfs-nog && ./gitlfsnogd ) &
+
+git config remote.origin.lfsurl http://localhost:5000/<noguser>/gitlfs
+
+git lfs push --all origin
+
+...
+
+git lfs fetch
+```
+
+"""
+
+from binascii import hexlify
+from flask import Flask, request, abort, url_for, Response
+from os import unlink
+import hashlib
+import json
+import nog
+import os
+
+app = Flask(__name__)
+app.debug = True
+
+
+@app.route('/')
+def hello():
+    return (
+        'Hello.  I am Gitlfsnogd.  I will forward your Git LFS data to Nog.\n'
+        'Start with POST /<nogRepoFullName>/objects/batch\n'
+    )
+
+
+@app.route('/<owner>/<repo>/objects/batch', methods=['POST'])
+def start_batch(owner, repo):
+    batch = json.loads(request.data.decode('utf-8'))
+    op = batch['operation']
+
+    if op == 'upload':
+        print('Contacting nog to create upload batch for repo `%s/%s`...' %
+              (owner, repo))
+        batch = store.createUploadBatch(owner, repo, batch['objects'])
+        body = json.dumps({'objects': batch.objects})
+        print('start', body)
+        return (body, 200, {'Content-Type': 'application/vnd.git-lfs+json'})
+
+    elif op == 'download':
+        batch = store.createDownloadBatch(owner, repo, batch['objects'])
+        body = json.dumps({'objects': batch.objects})
+        print('start', body)
+        return (body, 200, {'Content-Type': 'application/vnd.git-lfs+json'})
+
+    else:
+        abort(422)
+
+
+@app.route('/blob/<batchid>/<idx>', methods=['GET', 'PUT'])
+def blob(batchid, idx):
+    batch = store.getBatch(batchid)
+    if not batch:
+        abort(404)
+    idx = int(idx)
+    if idx < 0 or idx >= batch.count():
+        abort(404)
+    if request.method == 'GET':
+        return download(batch, idx)
+    else:
+        return upload(batch, idx)
+
+
+def download(batch, idx):
+    if batch.type != 'download':
+        abort(404)
+
+    def stream():
+        BLOCKSIZE = 8 * 1024
+        with batch.openBlob(idx) as fp:
+            while True:
+                buf = fp.read(BLOCKSIZE)
+                if len(buf) == 0:
+                    break
+                yield buf
+        if batch.more == 0:
+            store.delBatch(batch.id)
+            print('%s pending batches.' % len(store.batches))
+    return Response(stream(), mimetype='application/octet-stream')
+
+
+def upload(batch, idx):
+    if batch.type != 'upload':
+        abort(404)
+    if not batch.isPendingBlob(idx):
+        abort(404)
+    path = '_gitlfsnogupload/lfs-nog-upload-%s-%d.dat' % (batch.id, idx)
+    with open(path, 'wb') as fp:
+        sha, size = sha256(request.stream, fp)
+    if size != batch.objects[idx]['size']:
+        abort(422)
+    batch.setBlob(idx, sha, path)
+    if batch.more:
+        return sha
+
+    print('Committing to nog...')
+    remote = batch.nogremote
+    master = remote.getMaster()
+    root = master.tree
+    for obj in batch.objects:
+        setoid(root, obj['sha256'], obj['path'])
+    master = remote.commitTree(subject='git lfs upload', tree=root,
+                               parent=master.sha1)
+    print('\n\n===> nog commit:', master.sha1, '\n\n')
+    for obj in batch.objects:
+        unlink(obj['path'])
+    store.delBatch(batch.id)
+
+    print('%s pending batches.' % len(store.batches))
+
+    return sha + '\nupload complete.'
+
+
+def setoid(root, sha, path):
+    def getTree(tree, name):
+        try:
+            child = next(tree.trees(name))
+        except StopIteration:
+            child = nog.Tree()
+            child.name = name
+            tree.append(child)
+        return child
+
+    def getObject(tree, name):
+        try:
+            obj = next(tree.objects(name))
+        except StopIteration:
+            obj = nog.Object()
+            obj.name = name
+            tree.append(obj)
+        return obj
+
+    a = 'x' + sha[0:2]
+    b = 'x' + sha[2:4]
+    c = 'x' + sha[4:]
+    lfstree = getTree(root, '_lfs')
+    atree = getTree(lfstree, a)
+    btree = getTree(atree, b)
+    obj = getObject(btree, c)
+    obj.meta['sha256'] = sha
+    obj.blob = path
+
+
+def sha256(inp, out):
+    size = 0
+    BLOCKSIZE = 8 * 1024
+    h = hashlib.sha256()
+    while True:
+        buf = inp.read(BLOCKSIZE)
+        if len(buf) == 0:
+            break
+        size += len(buf)
+        h.update(buf)
+        out.write(buf)
+    return h.hexdigest(), size
+
+
+class BatchStore:
+    def __init__(self):
+        self.batches = {}
+
+    def createUploadBatch(self, owner, repo, objects):
+        nogremote = nog.openRepo(owner + '/' + repo)
+        batchid = self.genBatchId()
+        batch = UploadBatch(batchid, nogremote, objects)
+        if batch.more > 0:
+            self.batches[batch.id] = batch
+        return batch
+
+    def createDownloadBatch(self, owner, repo, objects):
+        nogremote = nog.openRepo(owner + '/' + repo)
+        batchid = self.genBatchId()
+        batch = DownloadBatch(batchid, nogremote, objects)
+        if batch.more > 0:
+            self.batches[batch.id] = batch
+        return batch
+
+    def getBatch(self, batchid):
+        return self.batches[batchid]
+
+    def delBatch(self, batchid):
+        del self.batches[batchid]
+
+    def genBatchId(self):
+        while True:
+            id = 'B' + hexlify(os.urandom(14)).decode('utf-8')
+            if id not in self.batches:
+                return id
+
+
+class UploadBatch:
+    def __init__(self, id, nogremote, objects):
+        self.type = 'upload'
+        self.id = id
+        self.nogremote = nogremote
+        self.objects = objects
+        self.more = len(objects)
+        for i, o in enumerate(objects):
+            o['actions'] = {
+                'upload': {
+                    'href': url_for('blob', batchid=id, idx=i, _external=True),
+                    'header': {
+                        'Authorization': 'none'
+                    }
+                }
+            }
+
+    def count(self):
+        return len(self.objects)
+
+    def isPendingBlob(self, idx):
+        return ('sha256' not in self.objects[idx])
+
+    def setBlob(self, idx, sha, path):
+        obj = self.objects[idx]
+        obj['sha256'] = sha
+        obj['path'] = path
+        self.more -= 1
+
+
+class DownloadBatch:
+    def __init__(self, id, nogremote, objects):
+        self.type = 'download'
+        self.id = id
+        self.objects = objects
+        self.more = len(objects)
+        master = nogremote.getMaster()
+        root = master.tree
+        self.objs = []
+        blobs = []
+        for i, o in enumerate(objects):
+            obj = getBlobObj(nogremote, root, o['oid'])
+            blobs.append(obj.blob)
+            self.objs.append(obj)
+            o['actions'] = {
+                'download': {
+                    'href': url_for('blob', batchid=id, idx=i, _external=True),
+                    'header': {
+                        'Authorization': 'none'
+                    }
+                }
+            }
+        nogremote.prefetchBlobs(blobs)
+
+    def count(self):
+        return len(self.objects)
+
+    def openBlob(self, idx):
+        self.more -= 1
+        return self.objs[idx].openBlob()
+
+
+def getBlobObj(remote, root, oid):
+    a = 'x' + oid[0:2]
+    b = 'x' + oid[2:4]
+    c = 'x' + oid[4:]
+    lfstree = next(root.trees('_lfs'))
+    atree = next(lfstree.trees(a))
+    btree = next(atree.trees(b))
+    obj = next(btree.objects(c))
+    return obj
+
+
+store = BatchStore()
+
+if __name__ == '__main__':
+    app.run()

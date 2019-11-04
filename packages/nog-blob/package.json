@@ -1,0 +1,20 @@
+{
+  "name": "nog-blob",
+  "version": "0.0.1",
+  "description": "Blob upload and download using S3 object storage",
+  "main": "index.coffee",
+  "scripts": {
+    "lint": "\"$(git rev-parse --show-toplevel)\"/node_modules/.bin/eslint .",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "minify-spark": "uglifyjs js/spark-md5.js js/spark-md5-worker.js >js/spark-md5.min.js && rm -f js/spark-md5.min.*.js && sha=\"$(gsha1sum js/spark-md5.min.js | awk '{print $1}')\" && ln -sv spark-md5.min.js js/spark-md5.min.${sha}.js && echo && echo Manually update package.js and HasherMd5 to use the latest symlinks."
+  },
+  "keywords": [
+    "Nog"
+  ],
+  "author": "Steffen Prohaska <prohaska@zib.de>",
+  "license": "MIT",
+  "//": "See toplevel package.json for ESLint dependencies",
+  "devDependencies": {
+    "uglify-js": "^2.7.3"
+  }
+}

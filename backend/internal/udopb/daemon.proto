@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package udo;
+option go_package = "udopb";
+
+service UdoDaemon {
+    rpc Terminate(TerminateI) returns (TerminateO);
+    rpc Ping(PingI) returns (PingO);
+}
+
+message TerminateI {
+}
+
+message TerminateO {
+}
+
+message PingI {
+}
+
+message PingO {
+    string username = 1;
+    uint32 uid = 2;
+    int32 pid = 3;
+    int32 ppid = 4;
+}

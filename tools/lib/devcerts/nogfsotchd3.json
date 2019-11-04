@@ -1,0 +1,15 @@
+{
+  "CN": "nogfsotchd3.example.com",
+  "hosts": [],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "DE",
+      "O": "ZIB",
+      "OU": "nog-servers"
+    }
+  ]
+}

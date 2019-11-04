@@ -1,0 +1,19 @@
+{
+  "CN": "nogfsog2nd.example.com",
+  "hosts": [
+    "127.0.0.1",
+    "localhost",
+    "nogfsog2nd.example.com"
+  ],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "DE",
+      "O": "ZIB",
+      "OU": "nog-servers"
+    }
+  ]
+}

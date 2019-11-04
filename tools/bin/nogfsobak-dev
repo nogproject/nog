@@ -1,0 +1,81 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+usage() {
+    cat <<\EOF
+Usage:
+  ./tools/bin/nogfsobak-dev
+
+`nogfsobak-dev` runs `tartt tar` for each FSO repo and pushes the result to the
+shadow branch `master-tartt`.
+EOF
+    exit 1
+}
+
+case "${1:-}" in
+-h|--help)
+    usage
+    ;;
+esac
+
+if ! [ -d '/go' ]; then
+    echo 'switching to container'
+    set -x
+    exec docker-compose run --rm godev ./tools/bin/nogfsobak-dev "$@"
+fi
+
+main() {
+    cd '/nogfso/tartt'
+
+    listRepos | while read -r repoId; do
+        tarttRepo "${repoId}"
+    done
+}
+
+listRepos() {
+    nogfsoctl get repos exreg | grep '^- {' | cut -b 3- | jq -r '.id'
+}
+
+tarttRepo() {
+    local repoId="$1"
+
+    json="$(nogfsoctl get repo "${repoId}")"
+    realdir="$(jq -r '.file' <<<"${json}" | cut -d : -f 2)"
+    shadowPath="$(jq -r '.shadow' <<<"${json}" | cut -d : -f 2)"
+    tarttDir="${repoId}"
+    fakeUser="user-$(cut -d - -f 1 <<<"${repoId}")"
+
+    if ! [ -e "${tarttDir}" ]; then
+        echo "    INIT ${tarttDir} ${realdir}"
+        mkdir "${tarttDir}"
+        (
+            cd "${tarttDir}"
+            pwd
+            echo tartt init --origin="${realdir}"
+            tartt init --origin="${realdir}"
+            git init
+            git config user.name "${fakeUser}"
+            git config user.email "${fakeUser}@example.com"
+            git add .
+            git commit -m 'init tartt repo'
+            git remote add -t master-tartt origin "${shadowPath}"
+            git config remote.origin.push refs/heads/master:refs/heads/master-tartt
+        )
+        echo "Initialized tartt $(realpath "${tarttDir}")"
+    fi
+
+    echo "    TAR ${tarttDir} ${realdir}"
+    (
+        cd "${tarttDir}"
+        tartt tar \
+            --recipient=80C4AD33864BC422467D465AE938E2DA3D857F91
+        tartt gc
+        tartt ls
+        git add .
+        git commit -m 'backup'
+        git push origin
+    )
+}
+
+main "$@"

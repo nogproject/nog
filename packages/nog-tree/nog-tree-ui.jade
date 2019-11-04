@@ -1,0 +1,563 @@
+template(name='tree')
+  if testAccess_ready 'nog-content/get' ownerName=ownerName repoName=repoName
+    if testAccess 'nog-content/get' ownerName=ownerName repoName=repoName
+      with treeCtx
+        +treeContent
+    else
+      +denied
+
+template(name='treeContent')
+  .row.t-tree
+    .col-sm-8.nog-viewer-buttons
+      with viewerInfo
+        +viewerButtons
+      strong #{ownerName} /
+        a(href="/#{ownerName}/#{repoName}/tree/master") #{repoName}
+        +forkedFrom
+    .col-sm-4
+      with viewerInfo
+        +repoToolbar
+
+  if isReady
+    with resolvedPath
+
+      .row
+        .col-md-12
+          +refDropdown
+          if refHasChanged
+            button.btn.btn-warning.btn-xs(
+                data-toggle='collapse' data-target='#refChangeNotice'
+              )
+              i.fa.fa-exclamation-triangle
+          with rootHref
+            strong
+              a(href=href) #{name}
+          each pathHrefs
+            = ' / '
+            if href
+              a(href=href) #{name}
+            else
+              strong #{name}
+
+      if refHasChanged
+        .collapse#refChangeNotice
+          .alert.alert-warning
+            | The repo has changed, displaying the latest version.
+            a.js-latest(href='#') Dismiss
+            | this message, or go back to the
+            a.js-previous(href='#') version that has been displayed before.
+            = '.'
+
+      // The *-vspace should probably be replaced by direct CSS box styles.
+      .nog-tree-above-tablist-vspace
+
+      +treeInfoTabs
+
+      hr
+
+      // I(spr)'ve disabled workspace actions, since the UI seemed a bit
+      // crowded.  I'd like to explore alternatives first: create a workspace
+      // with the desired layout in the first place; provide some kind of
+      // settings pane for a repo to edit fundamental properties like name and
+      // kind trees.
+
+      // if isWorkspace
+      //   +workspaceActions
+      //   hr
+
+      // // Useful for debugging template repr:
+      // hr
+      // p #{reprTemplate}
+      // hr
+
+      +Template.dynamic template=reprTemplate
+
+    else
+      .row
+        .col-md-12
+          with failResolveReason
+            if isLoading
+              | Loading...
+            else if pathResolveFailed
+              | Failed to resolve path.
+            else if repoIsUnknown
+              | Unknown repository.
+            else if repoIsRenamed
+              | The repository has been renamed to
+              = ' '
+              a(href="/#{newFullName}/tree/master") #{newFullName}
+              | .
+            else
+              | Unknown error.
+  else
+    .row
+      .col-md-12 Loading...
+
+
+template(name='entryReprDefault')
+  if isObject
+    +objectReprGeneric
+  if isTree
+    +treeEntriesWithInlineMarkdown
+
+
+template(name='treeReprDatalist')
+  if mayUpload
+    +uploadToDatalist
+    hr
+  +treeEntries
+
+
+template(name='treeInfoTabs')
+  .row
+    .col-md-12
+      ul.nav.nav-tabs(role='tablist')
+        li(role='presentation' class="#{summaryActive}")
+          a(href='#summary' role='tab' data-toggle='tab') Summary
+        li(role='presentation' class="#{metaActive}")
+          a(href='#meta' role='tab' data-toggle='tab') Meta
+        // li(role='presentation')
+        //   a(href='#history' role='tab' data-toggle='tab') History
+        li(role='presentation' class="#{historyActive}")
+          a(href='#history' role='tab' data-toggle='tab') History
+      .nog-tree-tablist-top-vspace
+      .tab-content
+        .tab-pane(role='tabpanel' id='summary' class="#{summaryActive}")
+          if description
+            p #{description}
+          if iskindJob
+            +jobInfo
+        .tab-pane(role='tabpanel' id='meta' class="#{metaActive}")
+          +metaView
+        // .tab-pane(role='tabpanel' id='history')
+        //   | History
+        .tab-pane(role='tabpanel' id='history' class="#{historyActive}")
+          +commitInfo
+
+
+template(name='commitInfo')
+  .row
+    .col-sm-8
+      with commitHref
+        a(href=href)
+          code #{shortId}
+        a(href=href) #{subject}
+    .col-sm-4 #{author} authored #{authorRelDate}
+
+
+template(name='refDropdown')
+  span.dropdown
+    button.btn.btn-default.dropdown-toggle(
+        type='button' data-toggle='dropdown'
+      ) #{titlePrefix}:
+      if isIdRef
+        code
+          strong #{title}
+      else
+        strong #{title}
+      span.caret
+    ul.dropdown-menu
+      each entries
+        li(role='presentation')
+          a(role='menuitem' tabindex='-1' href=href) #{name}
+
+
+template(name='workspaceActions')
+  .row
+    .col-md-12
+      span Workspace:
+      span.dropdown
+        button.btn.btn-default.dropdown-toggle(
+            type='button' data-toggle='dropdown'
+          ) Add
+          span.caret
+        ul.dropdown-menu
+          each addMenuItems
+            li(role='presentation' class="#{disabled}")
+              a.js-add(role='menuitem' tabindex='-1' href='#') #{name}
+
+
+template(name='treeEntries')
+  if mayModify
+    +newDatalistModal
+    .row
+      .col-sm-12
+        .btn-group.btn-group-sm
+          button.btn.btn-default.btn-sm.js-select-all All
+          button.btn.btn-default.btn-sm.js-deselect-all None
+        if isEditing
+          .pull-right
+            .btn-toolbar
+              if action
+                | #{action}...
+              else
+                .btn-group.btn-group-sm
+                  if shouldShowDataEntryDropdown
+                    +dataEntryDropdown
+                .btn-group.btn-group-sm
+                  button.btn.btn-danger.btn-sm.js-delete Delete
+                .btn-group.btn-group-sm
+                  if isAnyEntryNameModified
+                    button.btn.btn-primary.btn-sm.js-rename Rename
+                  else
+                    button.btn.btn-primary.btn-sm.js-rename(disabled='disabled')
+                      | Rename
+                +treeEntriesAddFolder
+    span &nbsp;
+
+  .row
+    .col-sm-12
+      table.table.table-condensed.table-striped
+        tbody
+          each entries
+            tr
+              td.nog-tree-entry-checkbox.js-toggle-entry(onclick='')
+                label
+                  input(type='checkbox' checked=isSelected)
+              if isEditing
+                td.nog-tree-entry-name-td
+                  span(class="glyphicon glyphicon-#{icon}")
+                  span.js-name-val(contenteditable) #{name}
+                  if isEntryNameModified
+                    span &nbsp;*
+              else
+                td.nog-tree-entry-name-td
+                  span(class="glyphicon glyphicon-#{icon}")
+                  if href
+                    a(href=href) #{name}
+                  else
+                    | #{name}
+              td.nog-tree-entry-dropdown-td
+                if isProgramPackage
+                  +programPackageDropdown
+              td.nog-tree-entry-description-td
+                if description
+                  span #{description}
+                  if note
+                    br
+                    small #{note}
+                    .nog-tree-entry-description-vspace
+                else
+                  if note
+                    small #{note}
+
+
+template(name='treeEntriesWithInlineMarkdown')
+    +treeEntries
+    with resolvedInlineObject
+      hr
+      +objectReprMarkdownPanel
+
+
+template(name='treeEntriesAddFolder')
+  .btn-group.btn-group-sm
+    button.btn.btn-primary.btn-sm.js-addFolder-start Add Folder
+  .modal.js-addFolder-modal
+    .modal-dialog
+      .modal-content
+        .modal-header
+          button.close(data-dismiss='modal') &times;
+          h4 New Folder
+        .modal-body
+          input.form-control.js-addFolder-name(type='text', autofocus='')
+        .modal-footer
+          button.btn.btn-default(data-dismiss='modal') Cancel
+          button.btn.btn-primary.js-addFolder-complete(disabled=inputIsEmpty) OK
+
+
+template(name='dataEntryDropdown')
+  span.dropdown
+    button.btn.btn-default.btn-sm.dropdown-toggle.t-add-data(
+        data-toggle='dropdown' type='button'
+      ) Data
+      span.caret
+    ul.dropdown-menu.t-add-data-menu
+      li.dropdown-header Add to Datalist:
+      li
+        a.js-new-datalist(role='menuitem' tabindex='-1' href='#') New
+      // li
+      //   a.js-starred(role='menuitem' tabindex='-1' href='#') Starred
+      each dstWorkspaces
+        li
+          a.js-add-to(role='menuitem' tabindex='-1' href='#') #{name}
+
+
+template(name='newDatalistModal')
+  .modal.fade.js-new-datalist-modal
+    .modal-dialog
+      .modal-content
+        .modal-header
+          button.close(data-dismiss='modal') &times;
+          h4 Create New Datalist
+        .modal-body
+          .form-group
+            label Name
+            input.form-control.js-new-repo-name(type='text')
+            span.help-block Enter a name for the new datalist.
+        .modal-footer
+          button.btn.btn-default(data-dismiss='modal') Cancel
+          button.btn.btn-primary.js-create-and-add(disabled=inputIsEmpty)
+            | Create and Add
+
+
+template(name='programPackageDropdown')
+  span.dropdown
+    if operation
+      button.btn.btn-default.btn-xs(disabled='disabled') #{operation}
+    else
+      button.btn.btn-default.btn-xs.dropdown-toggle(
+          data-toggle='dropdown' type='button'
+        ) Program
+        span.caret
+    ul.dropdown-menu
+      li.dropdown-header Add as Workspace Program:
+      each dstWorkspaces
+        li
+          a.js-add-to-workspace(role='menuitem' tabindex='-1' href='#') #{name}
+      li.dropdown-header Add to Program Registry:
+      each dstRegistries
+        li
+          a.js-add-to-registry(role='menuitem' tabindex='-1' href='#') #{name}
+
+
+template(name='objectReprGeneric')
+  with blobHref
+    .row
+      .col-sm-6.col-sm-offset-3
+        .jumbotron
+          p.text-center
+            i.fa.fa-download
+            | Download
+            +aBlobHref
+            if fileSize
+              | (#{fileSize.value}&nbsp;#{fileSize.unit})
+            else
+              | (unknown&nbsp;size)
+  with previewSrc
+    .row
+      .col-md-12
+        if isPlaceholder
+          | Loading preview image...
+        else
+          img.nog-object-repr-preview-img(src=href)
+  else
+    | no preview
+  if content
+    .row
+      .col-md-12
+        pre #{content}
+
+
+// XXX: +objectReprMarkdown is defined in package `nog-repr-markdown`.  It is an
+// inverted dependency: package `nog-tree` should not depend on a plugin.  It
+// works in practice, because `nog-app` includes both packages and loading is
+// completed before templates are rendered.  It should nonetheless be
+// refactored at some point.
+
+template(name='objectReprMarkdownPanel')
+  .panel.panel-default
+    .panel-heading
+      h4
+        span.glyphicon.glyphicon-file
+        | #{last.content.name}
+    .panel-body
+      .container-fluid
+        +objectReprMarkdown
+
+
+template(name='objectReprProgramParams')
+  if mayModify
+    form
+      .form-group
+        label Program Parameters (JSON)
+        pre.js-params(contenteditable) #{paramsJSON}
+        if inputError
+          .alert.alert-danger(role="alert") #{inputError}
+        span.help-block.
+          To change the parameters, edit the JSON and press Save Parameters.
+          Each save will create a new program version.
+      if action
+        button.btn.btn-default(disabled='disabled') #{action}
+      else
+        button.btn.btn-default.js-save-params Save Parameters
+  else
+    form
+      .form-group
+        label Program Parameters (JSON)
+        pre #{paramsJSON}
+
+
+template(name='objectReprProgramRuntime')
+  if mayModify
+    form
+      .form-group
+        label Program Runtime Settings (JSON)
+        pre.js-runtime(contenteditable) #{runtimeJSON}
+        if inputError
+          .alert.alert-danger(role="alert") #{inputError}
+        span.help-block.
+          To change the settings, edit the JSON and press Save Runtime
+          Settings.  Each save will create a new program version.
+      if action
+        button.btn.btn-default(disabled='disabled') #{action}
+      else
+        button.btn.btn-default.js-save-runtime Save Runtime Settings
+  else
+    form
+      .form-group
+        label Program Runtime Settings (JSON)
+        pre #{runtimeJSON}
+
+
+template(name='metaView')
+  .row
+    .col-sm-12
+      if mayModify
+        label.checkbox-inline
+          input.js-toggle-editing-meta(type='checkbox' checked=isEditing)
+          | Edit
+      pre.js-meta-text(contenteditable=isEditing) #{meta}
+      if mayModify
+        if inputError
+          .alert.alert-danger
+            span.glyphicon.glyphicon-exclamation-sign
+            | Error: #{inputError}
+        if isEditing
+          if action
+            button.btn.btn-primary(disabled='disabled') #{action}
+          else
+            button.btn.btn-primary.js-save-meta Save
+
+
+template(name='jobInfo')
+  if isReady
+    with job
+      with jobExecutionRepo
+        p The job execution repository is
+          a(href=href) #{fullName}
+          = '.'
+      else
+        .row
+          .col-sm-6
+            | Job #{status}, last status update #{updated}
+          .col-sm-2
+            .progress
+              .progress-bar(
+                  style="width: #{progressPct}%;"
+                  class="#{progressBarClass}"
+                )
+                if showProgressPct
+                  | #{progressPct}%
+        if log
+          .row
+            .col-sm-12
+              strong Job Log
+              ul
+                each log
+                  li #{time}: #{message}
+        with failure
+          .row
+            .col-sm-12
+              strong Failure Reason
+              pre.bg-danger #{reason}
+  else
+    .row
+      .col-sm-12
+      | Loading job status...
+
+
+template(name='uploadToDatalist')
+  form
+    .form-group
+      label Upload Files
+      input.js-upload-files(type='file' name='files[]' multiple)
+  each uploads
+    .row
+      .col-sm-4
+        span #{name}
+      .col-md-4
+        if haveSha1
+          | sha1 #{sha1}
+        else
+          | sha1 #{sha1Progress}%
+      .col-sm-4
+        .progress
+          div(
+            class="progress-bar {{uploadCompleteClass}}",
+            role="progressbar",
+            style="width: {{progressWidth}}%"
+          )
+
+
+template(name='treeReprRegistryProgram')
+  h4 Program #{name}
+  p
+    | by #{authors}
+    br
+    | Latest version: #{latestVersion}
+  with resolvedReadme
+    +objectReprMarkdownPanel
+  hr
+  +treeEntries
+
+
+template(name='treeReprWorkspaceProgram')
+  .row
+    .col-sm-4
+      h4 Workspace Program #{name}
+      p Latest version: #{latestVersion}
+      if mayRunProgram
+        +treeReprWorkspaceProgramRunButton
+      hr
+      +treeReprWorkspaceProgramDeps
+      hr
+      with resolvedParams
+        +objectReprProgramParams
+      with resolvedRuntime
+        hr
+        +objectReprProgramRuntime
+    .col-sm-8
+      with resolvedReadme
+        +objectReprMarkdownPanel
+  hr
+  +treeEntries
+
+
+template(name='treeReprWorkspaceProgramRunButton')
+  if action
+    button.btn.btn-primary(disabled='disabled') #{action}
+  else
+    if blocked
+      button.btn.btn-primary(disabled='disabled') Run
+    else
+      button.btn.btn-primary.js-run Run
+
+
+template(name='treeReprWorkspaceProgramDeps')
+  strong Dependencies
+  each deps
+    .row
+      .col-sm-12
+        span #{name}@#{version}
+        br
+        if origin
+          small
+            | from
+            a(href="#{origin.href}") #{origin.name}
+            if upstreamVersion
+              if isUpdateAvailable
+                | (latest version #{upstreamVersion})
+                if mayUpdateDep
+                  | &nbsp;
+                  +treeReprWorkspaceProgramDepsUpdateButton
+              else
+                | (up-to-date)
+            else
+              | (unknown version)
+
+
+template(name='treeReprWorkspaceProgramDepsUpdateButton')
+  if action
+    button.btn.btn-default.btn-xs(disabled='disabled') #{action}
+  else
+    button.btn.btn-default.btn-xs.js-update-dep update

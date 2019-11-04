@@ -1,0 +1,51 @@
+{
+  "package": {
+    "authors": [
+      {
+        "email": "prohaska@zib.de",
+        "name": "Steffen Prohaska"
+      }
+    ],
+    "content": {
+      "objects": [
+        {
+          "text": "CHANGELOG.md"
+        }
+      ]
+    },
+    "dependencies": [
+      {
+        "name": "nogpy"
+      }
+    ],
+    "description": "The nog package manager",
+    "frozen": [
+      {
+        "major": 0,
+        "minor": 0,
+        "name": "nogpy",
+        "patch": 18,
+        "prerelease": "",
+        "programRegistry": "nog/packages",
+        "sha1": "095b22663dcf67f0ac4cfc9534ac4504509407f6"
+      }
+    ],
+    "name": "nogpm",
+    "readme": "README.md",
+    "version": {
+      "major": 0,
+      "minor": 2,
+      "patch": 1,
+      "prerelease": null
+    }
+  },
+  "program": {
+    "code": {
+      "files": [
+        "nogpm",
+        "nogresolve.py"
+      ]
+    }
+  },
+  "programRegistry": "nog/packages"
+}

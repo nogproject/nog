@@ -1,0 +1,417 @@
+#!/usr/bin/env python3
+
+#pylint: disable=invalid-name,too-many-locals,missing-docstring
+#pylint: disable=ungrouped-imports,too-many-branches,too-many-statements
+
+from copy import copy
+from datetime import datetime
+from os.path import abspath
+from select import select
+from subprocess import check_call
+from tempfile import mkdtemp
+from time import sleep
+import contextlib
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+
+import nog
+
+
+def main():
+    if len(sys.argv) != 3:
+        raise RuntimeError('Invalid number of args.')
+    if sys.argv[1] != '--params':
+        raise RuntimeError('Invalid arguments.')
+    params = json.loads(sys.argv[2])
+    printmsg('params', stringify_pretty(params))
+
+    execJobId = params['nogexec']['execJobId']
+    retryId = params['nogexec']['retryId']
+    try:
+        runJob(params)
+        status = 'completed'
+        reason = None
+    except Exception as err:  #pylint: disable=broad-except
+        status = 'failed'
+        reason = str(err)
+
+    printmsg(status)
+    nog.postJobStatus(execJobId, retryId, status, reason)
+
+
+# Slurm might preempt and restart jobs.  `runJob()` creates a separate, fresh
+# directory for each restart, assuming that jobs cannot handle restarts
+# efficiently and may get confused by partial results.  We consider later
+# adding an option that let jobs specify that they want to run in the same
+# directory on restarts.
+#
+# The directory scheme should support execution on different hosts; but is has
+# not been tested.  `NOG_CACHE_PATH` can point to an existing local directory.
+# `runJob()` will create all necessary directories below for each execution.
+#
+# `runJob()` removes the entire job dir on success.  Job dirs of failing jobs
+# are deliberately preserved for debugging.  Directories may also survive
+# cleanup if a job was restarted on a different host or if the directory that
+# `nogexec-slurm.coffee` created for the slurm logs is on a different host.
+# Job dirs need to be garbage collected by some kind of maintenance scheme that
+# regularly removes expired job dirs.
+
+def runJob(params):
+    retryId = params['nogexec']['retryId']
+    jobId = params['jobId']
+    workspaceRepo = params['workspaceRepo']
+    commitId = params['commitId']
+
+    jobsdir = os.environ['NOG_CACHE_PATH'] + '/jobs'
+    jobsdir = abspath(jobsdir)
+    if not os.path.isdir(jobsdir):
+        os.mkdir(jobsdir)
+    jobdir = jobsdir + '/' + jobId
+    if not os.path.exists(jobdir):
+        os.mkdir(jobdir)
+    os.chdir(jobdir)
+    execdir = mkdtemp(prefix='exec-', dir=jobdir)
+    os.chdir(execdir)
+
+    logger = NogJobLogger(jobId, retryId)
+    logger.log('Started execution in directory `{0}:{1}`'
+               .format(hostname(), execdir))
+
+    workspace = nog.openRepo(workspaceRepo)
+    master = workspace.getMaster()
+    if master.sha1 != commitId:
+        raise RuntimeError("master does not match `params.commitId`.")
+
+    root = master.tree
+
+    # Get job and program by name and sha1.
+    jobs = next(root.trees('jobs'))
+    job = next(jobs.trees(jobId))
+    printmsg('job', job.sha1, stringify_pretty(job.content))
+    prgName = job.meta['job']['program']['name']
+    prgSha1 = job.meta['job']['program']['sha1']
+    programs = next(root.trees('programs'))
+    pkg = None
+    for p in programs.entries():
+        if p.meta['package']['name'] == prgName:
+            pkg = p
+            break
+    if not pkg:
+        raise RuntimeError("Failed to find program package.")
+    printmsg('package', pkg.sha1, stringify_pretty(pkg.content))
+    prg = None
+    for p in pkg.entries():
+        if p.sha1 == prgSha1:
+            prg = p
+            break
+    if not prg:
+        raise RuntimeError("Failed to find program instance.")
+    printmsg('program', prg.sha1, stringify_pretty(prg.content))
+
+    program = link(prg)
+    printmsg('linked', stringify_pretty(program))
+
+    platform = setupPlatform(program['platform'], logger)
+
+    for a in program['code']['archives']:
+        ar = workspace.getObject(a['sha1'])
+        printmsg('unpacking archive', ar.sha1, stringify_pretty(ar.content))
+        with ar.openBlob() as fp:
+            with tarfile.open(fileobj=fp) as tar:
+                for m in tar.getmembers():
+                    printmsg(m.name)
+                    tar.extract(m)
+    printmsg()
+
+    params = copy(program['params'])
+    params['nog'] = {
+        'workspaceRepo': workspaceRepo,
+        'commitId': commitId,
+        'job': {
+            'id': job.meta['job']['id'],
+            'sha1': job.sha1,
+            'retryId': retryId
+        },
+        'program': job.meta['job']['program']
+    }
+
+    printmsg('Executing: (')
+    python = platform['python']
+    args = program['args']
+    if len(args) == 0:
+        args.append('main.py')
+    argsstring = " ".join("'" + a + "'" for a in args)
+    printmsg("cd '{0}' &&".format(execdir))
+    printmsg(
+        "{0} {1} --params '{2}'"
+        .format(python, argsstring, stringify_pretty(params))
+    )
+    printmsg(')')
+
+    args.insert(0, python)
+    args.append('--params')
+    args.append(stringify(params))
+
+    logger.log('Started execution of main program')
+
+    # Start child, stream output, and capture stderr.  Use `readline()`,
+    # assuming the child prints linewise.
+    child = subprocess.Popen(
+        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    errlines = []
+    fds = [child.stdout, child.stderr]
+    more = True
+    while more:
+        readable, _, _ = select(fds, [], [])
+        more = False
+        for fd in readable:
+            line = fd.readline().decode('utf-8')
+            if not line:
+                continue
+            more = True
+            if fd is fds[0]:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+            if fd is fds[1]:
+                errlines.append('stderr: ' + line)
+                sys.stderr.write(line)
+                sys.stderr.flush()
+    if child.poll():  # Returns and sets returncode.
+        raise RuntimeError(
+            'Comand returned non-zero exit status.\n' +
+            'exit code: ' + str(child.returncode) + '\n' +
+            'args: ' + str(args) + '\n' +
+            ''.join(errlines)
+        )
+
+    logger.log('Completed execution of main program')
+
+    printmsg('Cleaning up...')
+    shutil.rmtree(jobdir)  # Entire jobdir; see comment at `runJob()`.
+
+
+def link(prg):
+    program = {}
+    mergeExtend = ['dependencies', 'archives']
+
+    def merge(dst, src):
+        for k in src:
+            if k in dst:
+                if isinstance(dst[k], dict) and isinstance(src[k], dict):
+                    merge(dst[k], src[k])
+                elif (isinstance(dst[k], list) and isinstance(src[k], list) and
+                      (k in mergeExtend)):
+                    dst[k].extend(src[k])
+                else:
+                    dst[k] = src[k]
+            else:
+                dst[k] = src[k]
+
+    def add(e):
+        try:
+            p = e.meta['program']
+        except KeyError:
+            return
+        merge(program, p)
+
+    def walk(tree):
+        for e in tree.entries():
+            if e.type == 'object':
+                add(e)
+            elif e.type == 'tree':
+                walk(e)
+            else:
+                raise RuntimeError('Unknown entry type.')
+        add(tree)
+
+    walk(prg)
+    return program
+
+
+def setupPlatform(platform, logger):
+    return setupPlatformCached(platform, logger)
+
+
+def setupPlatformCached(platform, logger):
+    platform = copy(platform)
+    # Increment version to invalidate cache when setup code changes.
+    platform['_setupPlatformVersion'] = 2
+    key = contentId(platform)
+    parentdir = os.environ['NOG_CACHE_PATH'] + '/platforms'
+    if not os.path.isdir(parentdir):
+        os.mkdir(parentdir)
+
+    path = parentdir + '/' + key
+    try:
+        os.mkdir(path)
+        printmsg('Setting up platform from scratch.')
+        logger.log('Started setting up platform')
+        platformSetup = setupPlatformInCachedir(path, platform)
+        logger.log('Completed platform')
+    except OSError:
+        if not os.path.exists(path):
+            raise
+        waitForPlatformSetup(path, logger)
+        printmsg('Using cached platform.')
+        logger.log('Using cached platform')
+        with open(path + '/_nogplatformsetup.json', 'rt') as fp:
+            platformSetup = json.load(fp)
+    return platformSetup
+
+
+def setupPlatformInCachedir(path, platform):
+    try:
+        with chdir(path):
+            with open('_nogplatformspec.json', 'wt') as fp:
+                fp.write(stringify_pretty(platform))
+            platformSetup = setupPlatformUncached(platform)
+            with open('_nogplatformsetup.json', 'wt') as fp:
+                fp.write(stringify_pretty(platformSetup))
+        open(path + '.ready', 'w').close()
+        return platformSetup
+    except:
+        printmsg('Platform setup failed')
+        # Try to preserve failed directory for analysis; try hard to remove it
+        # in order to not block other jobs.
+        #
+        # XXX: The bare `except` statements should be changed to catch only
+        # errors that we expect, like OS rename errors.
+        try:
+            now = datetime.utcnow().strftime('%Y-%m-%dT%H%M%S.%fZ')
+            save = path + '_failed-' + now
+            os.rename(path, save)
+            printmsg('Preserved failed setup in `{0}`.'.format(save))
+        except:  #pylint: disable=bare-except
+            pass
+        try:
+            shutil.rmtree(path)
+            printmsg('Removed platform cache dir.')
+        except:  #pylint: disable=bare-except
+            pass
+        raise
+
+
+@contextlib.contextmanager
+def chdir(path):
+    old = os.getcwd()
+    try:
+        os.chdir(path)
+        yield
+    finally:
+        os.chdir(old)
+
+
+def waitForPlatformSetup(path, logger):
+    if os.path.exists(path + '.ready'):
+        return
+    logger.log('Started waiting for other job to complete platform setup')
+    interval_s = 60
+    nwait = 40
+    while not os.path.exists(path + '.ready'):
+        if nwait == 0:
+            raise RuntimeError(
+                'Timeout waiting for other job to complete platform setup.'
+            )
+        nwait = nwait - 1
+        printmsg('Waiting for other job to complete platform setup...')
+        sleep(interval_s)
+
+
+def setupPlatformUncached(platform):
+    setup = {}
+    for dep in platform['dependencies']:
+        name = dep['name']
+        if 'python' in name:
+            setup_pythonX(setup, dep)
+        elif name == 'opencv3':
+            setup_opencv3(setup)
+        else:
+            raise RuntimeError('Unknown platform dependency `{0}`.'
+                               .format(name))
+    return setup
+
+
+# Setup 'python2' or 'python3'.
+def setup_pythonX(setup, dep):
+    pythonv = dep['name']
+    venvname = 'venv'
+    vargs = ['virtualenv', venvname, '-p', pythonv]
+    check_call(vargs)
+    if 'requirements' in dep:
+        # Ensure latest pip and setuptools
+        pip = './' + venvname + '/bin/pip'
+        printmsg('Upgrading pip.')
+        pipargs = [pip, 'install', '--upgrade', 'pip', 'setuptools']
+        check_call(pipargs)
+        # Avoid `requirements.txt`, since it had problems with numpy.
+        for req in dep['requirements']:
+            printmsg('Installing {0}.'.format(req))
+            pipargs = [venvname+'/bin/pip', 'install', '-q', req]
+            check_call(pipargs)
+    setup['python'] = os.getcwd() + '/' + venvname + '/bin/' + pythonv
+    setup['venvname'] = venvname
+
+
+def setup_opencv3(setup):
+    host = hostname()
+    if host == 'vsl4':
+        lib = '/local/scratch/nog/opencv3/lib/cv2.so'
+    elif host == 'kodkod':  # spr's MacBook.
+        lib = ('/usr/local/Cellar' +
+               '/opencv3/3.0.0/lib/python2.7/site-packages/cv2.so')
+    else:
+        raise RuntimeError("opencv3 is not supported on host `{0}`."
+                           .format(host))
+    os.link(lib, os.path.join(setup['venvname'],
+                              'lib/python2.7/site-packages/cv2.so'))
+
+
+def stringify_pretty(d):
+    return json.dumps(d, sort_keys=True, ensure_ascii=False, indent=2) + '\n'
+
+
+def stringify_canonical(d):
+    return json.dumps(
+        d, sort_keys=True, ensure_ascii=False, separators=(',', ':')
+    ).encode('utf-8')
+
+
+def stringify(d):
+    return json.dumps(d, ensure_ascii=False) + '\n'
+
+
+def contentId(e):
+    h = hashlib.sha1()
+    h.update(stringify_canonical(e))
+    return h.hexdigest()
+
+
+# Sync after each print to ensure message order when stdout is a pipe.
+def printmsg(*args):
+    print(*args)
+    sys.stdout.flush()
+
+
+def hostname():
+    import platform
+    return platform.node()
+
+
+class NogJobLogger:
+    #pylint: disable=too-few-public-methods
+
+    def __init__(self, jobId, retryId):
+        self.jobId = jobId
+        self.retryId = retryId
+
+    def log(self, message):
+        nog.postJobLog(self.jobId, self.retryId, message)
+
+
+main()

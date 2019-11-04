@@ -1,0 +1,80 @@
+#!/bin/bash
+
+set -o nounset -o errexit -o noglob -o pipefail
+
+usage() {
+    cat <<\EOF
+usage: sign-req <method> <URL>
+
+Sign URL with the 'nog-v1' signature scheme using the key from the environment
+variables NOG_KEYID and NOG_SECRETKEY.
+
+Example:
+
+    curl $(./tools/bin/sign-req GET http://localhost:3000/api/blobs/31968d2e8b58e29e63851cb4b340216026f11f69) | python -m json.tool
+
+EOF
+}
+
+main() {
+    argparse "$@"
+
+    path="$(sed <<<"${arg_url}" -e 's|http[^:]*://[^/]*||')"
+    hasQuery=
+    grep -q <<<"${path}" '?' && hasQuery=t
+
+    authalgorithm='nog-v1'
+    authkeyid="${NOG_KEYID}"
+    authdate="$(date -u +%FT%H%M%SZ)"
+    authexpires=600
+    authnonce="$(head -c 10 /dev/urandom | openssl sha1 | sed -e 's/^.*= //' | head -c 10)"
+
+    if test ${hasQuery}; then
+        suffix='&'
+    else
+        suffix='?'
+    fi
+    suffix+="authalgorithm=${authalgorithm}"
+    suffix+="&authkeyid=${authkeyid}"
+    suffix+="&authdate=${authdate}"
+    suffix+="&authexpires=${authexpires}"
+    suffix+="&authnonce=${authnonce}"
+
+    secretkey="${NOG_SECRETKEY}"
+    authsignature="$(
+        printf '%s\n%s%s\n' "${arg_method}" "${path}" "${suffix}" |
+        openssl dgst -sha256 -hmac "${secretkey}" |
+        sed -e 's/^.*= //'
+    )"
+    suffix+="&authsignature=${authsignature}"
+
+    printf '%s%s\n' "${arg_url}" "${suffix}"
+}
+
+argparse() {
+    while [ $# -ge 1 ]; do
+        case $1 in
+        -h|--help)
+            usage
+            exit
+            ;;
+        -*)
+            die "unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+    [ $# -eq 2 ] || die "Wrong number of arguments."
+    arg_method="$1"
+    arg_url="$2"
+}
+
+die() {
+    printf >&2 'Error: %s\n' "$1"
+    exit 1
+}
+
+main "$@"

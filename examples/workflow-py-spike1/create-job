@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+
+from copy import copy, deepcopy
+from datetime import datetime
+import json
+import nog
+import os
+import random
+import string
+
+workspaceRepo = 'fake_celltracking-workspace_2015'
+programName = 'celltracking'
+
+
+def main():
+    workspace = nog.openRepo(workspaceRepo)
+    master = workspace.getMaster()
+    root = master.tree
+
+    programs = next(root.trees('programs'))
+    prg = next(programs.trees(programName))
+    prgCurrent = next(prg.entries())
+
+    try:
+        jobs = next(root.trees('jobs'))
+    except StopIteration:
+        jobs = emptyJobsTree()
+        root.append(jobs)
+        master = workspace.commitTree(
+                subject='Add jobs tree', tree=root, parent=master.sha1
+            )
+        print(master.sha1, stringify_pretty(master.content))
+
+    date = datetime.utcnow().strftime('%Y-%m-%dT%H%M%SZ')
+    jobid = date + '-' + randomword(5)
+    job = nog.Tree()
+    job.name = jobid
+    job.meta['job'] = {
+        'id': jobid,
+        'status': 'pending',
+        'program': {
+            'name': prgCurrent.meta['package']['name'],
+            'sha1': prgCurrent.sha1
+        }
+    }
+    jobs.insert(0, job)
+
+    master = workspace.commitTree(
+            subject='Add job',
+            tree=root, parent=master.sha1
+        )
+    print(master.sha1, stringify_pretty(master.content))
+
+
+def emptyJobsTree():
+    root = nog.Tree()
+    root.name = 'jobs'
+    root.meta['jobs'] = {}
+    return root
+
+
+def randomword(length):
+    chars = (random.choice(string.ascii_lowercase) for i in range(length))
+    return ''.join(chars)
+
+
+def stringify_pretty(d):
+    return json.dumps(d, sort_keys=True, ensure_ascii=False, indent=2) + '\n'
+
+
+main()

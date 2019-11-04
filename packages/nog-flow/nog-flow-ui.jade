@@ -1,0 +1,443 @@
+template(name='workspace')
+  if testAccess_ready 'nog-content/get' ownerName=ownerName repoName=repoName
+    if testAccess 'nog-content/get' ownerName=ownerName repoName=repoName
+      +workspaceContent
+    else
+      +denied
+
+
+template(name='workspaceContent')
+  .row.t-workspace
+    .col-sm-8.nog-viewer-buttons
+      with viewerInfo
+        +viewerButtons
+      strong #{ownerName} / #{repoName}
+      +forkedFrom
+    .col-sm-4
+      with viewerInfo
+        +repoToolbar
+  if Template.subscriptionsReady
+    with repoContext
+      +workspaceRepoMasterContent
+  else
+    .row
+      .col-md-12 Loading repo...
+
+
+template(name='workspaceRepoMasterContent')
+  if Template.subscriptionsReady
+    if oldWorkspaceVersion
+      .alert.alert-warning
+        | WARNING:
+        | Your workspace appears to be an old repository version. This may
+        | lead to display errors in the 'Results' section.
+        | To upgrade your repository, add '"results": {}' to the meta field
+        | in technical view.
+    if errata
+      +nogWorkspaceRepoMasterContentErrata(errata=errata)
+    if isWorkspace
+      with datalistInfos
+        +workspaceFlowData
+      br
+      with programsInfos
+        +workspaceFlowPrograms
+      br
+      with jobsInfos
+        +workspaceFlowJobs
+      br
+      with resultsInfos
+        +workspaceFlowResults
+
+      +workspaceFlowNavbar
+    else
+      .alert.alert-warning
+        | WARNING:
+        | This view is only for wokspace repositories. But this repository
+        | is not a workspace.
+
+
+template(name='workspaceFlowData')
+  .row
+    .col-sm-12
+      .panel.panel-default
+        a(name="id-inputData")
+        .panel-heading
+          h4.nog-flow-panel(data-toggle="collapse",
+            data-target="#collapse-dataSection") Input Data
+        .panel-body.panel-collapse(id="collapse-dataSection",
+            class="collapse in")
+          .container-fluid
+            if hasDatalist
+              p
+                .row
+                  .col-sm-10
+                    | #{numberofShownFiles} of #{numberOfDataEntries} selected
+                    | entries.
+              p
+                table.table.table-condensed.table-striped
+                  tbody
+                    each selectedFiles
+                      tr
+                        td
+                          i.fa(class="fa-#{icon}")
+                          | #{name}
+                    if hasMoreFiles
+                      tr
+                        td
+                          | ...
+            else
+              p No datalist available!
+        .panel-footer
+          .row
+            .col-sm-4
+              unless emptyDatalist
+                button.btn.btn-default.btn-sm.js-browse-datalist(
+                    href="#{path}") View all
+            .col-sm-8
+              .pull-right
+                button.btn.btn-default.btn-sm.js-upload(disabled=isDisabled)
+                  | Upload files
+                button.btn.btn-default.btn-sm.js-browse-add-files
+                    .t-browse-add-files(href="/") Browse for files
+                button.btn.btn-default.btn-sm.js-browse-search.t-browse-search(
+                  href="/search") Search for data on nog
+
+
+template(name='workspaceFlowPrograms')
+  .row
+    .col-sm-12
+      .panel.panel-default
+        a(name="id-programs")
+        .panel-heading
+          h4.nog-flow-panel(data-toggle="collapse",
+            data-target="#collapse-programSection") Programs
+        .panel-body.panel-collapse(id="collapse-programSection",
+            class="collapse in")
+          .container-fluid
+            p
+              .row
+                .col-sm-12
+                  | Subscribed programs: #{numberOfPrograms}
+            p
+              .row
+                .col-sm-4
+                  if hasProgramList
+                    with programList
+                      +workspaceFlowList
+                  else
+                    p No program list available!
+                .col-sm-8
+                  with programInfo
+                    +workspaceFlowProgramsSel
+        .panel-footer
+          button.btn.btn-default.btn-sm.js-browse-add-program(href="/")
+            | Browse for programs
+          button.btn.btn-default.btn-sm.js-browse-search-program(
+            href="/search") Search for programs on nog
+
+
+template(name='workspaceFlowProgramsSel')
+  .row
+    .col-sm-12
+  if isValid
+    .row
+      .col-sm-6
+        p
+          strong Latest version:
+          br
+          | #{latestVersion}
+      .col-sm-6
+        p
+          +workspaceFlowProgramsSelDeps
+    .row
+      .col-sm-12
+        p
+          with resolvedReadme
+            +workspaceFlowProgramsSelReadme
+    br
+    .row
+      .col-sm-6
+        p
+          with resolvedParams
+            +workspaceFlowProgramsSelParams
+      .col-sm-6
+        p
+          with resolvedRuntime
+            +workspaceFlowProgramsSelRuntime
+    br
+    .row
+      .col-sm-12
+        if mayRunProgram
+          p
+            +workspaceFlowProgramsSelRunButton
+  else
+    | No valid program information available!
+
+
+template(name='workspaceFlowProgramsSelDeps')
+  strong Dependencies
+  each deps
+    .row
+      .col-sm-12
+        span #{name}@#{version}
+        br
+        if origin
+          small
+            | from
+            a(href="#{origin.href}") #{origin.name}
+            if upstreamVersion
+              if isUpdateAvailable
+                | (latest version #{upstreamVersion})
+                if mayUpdateDep
+                  | &nbsp;
+                  +workspaceFlowProgramsSelDepsUpdate
+              else
+                | (up-to-date)
+            else
+              | (unknown version)
+
+
+template(name='workspaceFlowProgramsSelDepsUpdate')
+  if action
+    button.btn.btn-default.btn-xs(disabled='disabled') #{action}
+  else
+    button.btn.btn-default.btn-xs.js-update-dep update
+
+
+template(name='workspaceFlowProgramsSelParams')
+  if mayModify
+    form
+      .form-group
+        label Program Parameters (JSON)
+        span.help-block.
+          To change the parameters, edit the JSON and press Save Parameters.
+          Each save will create a new program version.
+        | {{{editable}}}
+        if inputError
+          .alert.alert-danger(role="alert") #{inputError}
+      if action
+        button.btn.btn-default.btn-block(disabled='disabled') #{action}
+      else
+        button.btn.btn-default.btn-block.js-save-params Save Parameters
+  else
+    form
+      .form-group
+        label Program Parameters (JSON)
+        pre #{paramsJSON}
+
+
+template(name='workspaceFlowProgramsSelRuntime')
+  if mayModify
+    form
+      .form-group
+        label Program Runtime Settings (JSON)
+        span.help-block.
+          To change the settings, edit the JSON and press Save Runtime
+          Settings.  Each save will create a new program version.
+        | {{{editable}}}
+        if inputError
+          .alert.alert-danger(role="alert") #{inputError}
+      if action
+        button.btn.btn-default.btn-block(disabled='disabled') #{action}
+      else
+        button.btn.btn-default.btn-block.js-save-runtime Save Runtime Settings
+  else
+    form
+      .form-group
+        label Program Runtime Settings (JSON)
+        pre #{runtimeJSON}
+
+
+template(name='workspaceFlowProgramsSelReadme')
+  .panel-group
+    .panel.panel-default
+      .panel-heading.nog-flow-panel.collapsed(data-toggle="collapse",
+          data-target="#info")
+        strong More information
+      .panel-body.panel-collapse(id="info", class="collapse")
+        +nogReprMarkdownFileView
+
+
+template(name='workspaceFlowProgramsSelRunButton')
+  if action
+    button.btn.btn-primary.btn-block(disabled='disabled') #{action}
+  else
+    if blocked
+      button.btn.btn-primary.btn-block(disabled='disabled') Run program
+    else
+      button.btn.btn-primary.btn-block.js-run Run program
+
+
+template(name='workspaceFlowJobs')
+  .row
+    .col-sm-12
+      .panel.panel-default
+        a(name="id-jobs")
+        .panel-heading
+          h4.nog-flow-panel(data-toggle="collapse",
+            data-target="#collapse-jobSection") Jobs
+        .panel-body.panel-collapse(id="collapse-jobSection",
+            class="collapse in")
+          .row
+            .col-sm-6
+              strong Program name
+            .col-sm-3
+              strong Status
+            .col-sm-2
+              strong Latest update
+            .col-sm-1
+              strong Info
+          hr
+          each jobs
+            if showJob
+              +workspaceFlowJobInfo
+        .panel-footer
+          if showAllJobs
+            button.btn.btn-default.btn-sm.js-show-all-jobs-toggle Show latest
+          else
+            button.btn.btn-default.btn-sm.js-show-all-jobs-toggle Show all
+          if isDeleting
+            button.btn.btn-default.btn-sm.js-delete-all-jobs
+              span.fa.fa-spinner.fa-pulse
+              | Deleting...
+          else
+            button.btn.btn-default.btn-sm.js-delete-all-jobs Delete all
+
+
+template(name='workspaceFlowJobInfo')
+  .row
+    .col-sm-6
+      p #{programName}
+    .col-sm-3
+      if jobInProgress
+        div.progress
+          div.progress-bar(style="width: #{progressPercent}%;")
+            span #{progressPercent}%
+      else
+        p(class="#{statusClass}") #{status}
+    .col-sm-2
+      p #{lastUpdate}
+    .col-sm-1
+      button.btn.btn-default.btn-xs(data-toggle="collapse",
+          data-target="#collapse-#{jobId}")
+        span.fa.fa-info-circle.fa-lg
+
+  div.collapse(id="collapse-#{jobId}").text-muted
+    .row
+      .col-sm-2
+        p Job Id:
+      .col-sm-10
+        p #{jobId}
+    .row
+      .col-sm-2
+        p Created:
+      .col-sm-10
+        p #{createdDate}
+    .row
+      .col-sm-2
+        p Last update:
+      .col-sm-10
+        p #{updated}
+    .row
+      .col-sm-2
+        p MongoDB Id:
+      .col-sm-10
+        p #{_id}
+    .row
+      .col-sm-2
+        p Log:
+      .col-sm-10
+        p
+          each log
+            | #{time}: #{message}
+            br
+    if failures
+      .row
+        .col-sm-2
+          p Failures:
+        .col-sm-10
+          each failures
+            p
+              each reasonLines
+                | #{this}
+                br
+
+
+template(name='workspaceFlowResults')
+  .row
+    .col-sm-12
+      .panel.panel-default
+        a(name="id-results")
+        .panel-heading
+          h4.nog-flow-panel(data-toggle="collapse",
+            data-target="#collapse-resultSection") Results
+        .panel-body.panel-collapse(id="collapse-resultSection",
+            class="collapse in")
+          .row
+            .col-sm-4
+              with resultsList
+                +workspaceFlowList
+            .col-sm-8
+              .panel-group
+                with resultSet
+                  each child in children
+                    .panel.panel-default
+                      if isSingleResult
+                        .panel-heading.nog-flow-panel(
+                            data-toggle="collapse",
+                            data-target="#collapse-#{child.id}")
+                          +initTooltips
+                            strong(title="#{child.description}",
+                                data-toggle="tooltip") #{child.name}
+                      else
+                        .panel-heading.nog-flow-panel.collapsed(
+                            data-toggle="collapse",
+                            data-target="#collapse-#{child.id}")
+                          +initTooltips
+                            strong(title="#{child.description}",
+                                data-toggle="tooltip") #{child.name}
+                      if isSingleResult
+                        .panel-body.panel-collapse(id="collapse-#{child.id}",
+                            class="collapse in")
+                          with child.child
+                            +nogReprMarkdownFileView
+                      else
+                        +nogOneWorkspaceResult(child=child)
+
+        .panel-footer
+          if resultsExists
+            button.btn.btn-default.btn-sm.js-browse-results
+              | Browse results
+          else
+            button.btn.btn-default.btn-sm.disabled Browse results
+
+
+template(name='workspaceFlowNavbar')
+  nav.navbar.navbar-default.navbar-fixed-bottom
+    .collapse.navbar-collapse.nog-flow-navbar-collapse
+      ul.nav.navbar-nav.nog-flow-navbar-nav
+        li
+          a(href='#id-inputData') Input Data
+            li
+              a(href='#id-programs') Programs
+            li
+              a(href='#id-jobs') Jobs
+            li
+              a(href='#id-results') Results
+    .navbar-footer
+      button.navbar-toggle(type='button', data-toggle='collapse',
+      data-target='.nog-flow-navbar-collapse')
+        span.icon-bar
+        span.icon-bar
+        span.icon-bar
+
+
+template(name='workspaceFlowList')
+  table.table.table-condensed.table-striped.table-hover
+    tbody
+      each entries
+        tr(class="#{classSelected}")
+          td #{displayName}
+          td.text-right
+            if classSelected
+              i.fa.fa-caret-right

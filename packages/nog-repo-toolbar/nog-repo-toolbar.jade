@@ -1,0 +1,48 @@
+template(name='repoToolbar')
+  .row.t-repo-tool-bar
+    .col-sm-12
+      .pull-right
+        if isOwnRepo
+          span.t-repo-tool-bar-sharing
+            +initTooltips
+                button.btn.btn-default.nog-no-border.js-show-share-settings(
+                    data-toggle='tooltip' data-placement='bottom'
+                    title='Share repository'
+                  )
+                  i.fa.fa-share-square-o
+        if mayFork
+          span.t-repo-tool-bar-fork
+            if action
+              button.btn.btn-default.nog-no-border
+                  .t-repo-tool-bar-fork-active(disabled='disabled')
+                | #{action}
+            else
+              +initTooltips
+                button.btn.btn-default.nog-no-border.js-fork-repo(
+                    data-toggle='tooltip' data-placement='bottom'
+                    title='Fork your own copy of the repository to your account'
+                  )
+                  i.fa.fa-code-fork
+        if mayAccessSetting
+          span.t-repo-tool-bar-settings
+            +initTooltips
+              button(data-toggle='tooltip' data-placement='bottom'
+                title='Repo Settings'
+              ).btn.btn-default.nog-no-border.js-repo-settings.t-repo-settings
+                i.fa.fa-wrench
+
+  if sharingIsVisible
+    with sharingCtx
+      +repoSharing
+
+
+template(name='forkedFrom')
+  .row.t-forked-from
+    .col-sm-12
+      if forkedFrom
+        span.help-block.t-forked-from-info
+          small
+            i.fa.fa-code-fork
+            = ' '
+            | forked from
+            a(href="/#{forkedFrom}/#{routeName}") #{forkedFrom}

@@ -1,0 +1,56 @@
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+
+# This script may be called as described in "Debian Policy Manual" subsection
+# "Summary of ways maintainer scripts are called",
+# <https://www.debian.org/doc/debian-policy/ch-maintainerscripts.html#summary-of-ways-maintainer-scripts-are-called>.
+
+case "$1" in
+configure)
+    # Debconf uses unset variables.
+    set +o nounset
+    source /usr/share/debconf/confmodule
+
+    db_input medium nogfsostad/user || true
+    db_go
+    db_get nogfsostad/user
+    stad="${RET}"
+
+    db_input medium nogfsostad/org_group || true
+    db_go
+    db_get nogfsostad/org_group
+    org="${RET}"
+
+    set -o nounset
+
+    # Add an unprivileged daemon user and group.
+    adduser --quiet \
+        --system --group \
+        --home /nonexistent --no-create-home \
+        "${stad}" || true
+
+    echo "nogfsostad: Add the daemon user to the organization groups, for example: \`adduser ${stad} ${org}; adduser ${stad} exorg_ag-alice; adduser ${stad} exsrv_spim-100; ...\`."
+
+    if ! [ -e '/etc/sudoers.d/nogfsostasududod' ]; then
+        install -m 0440 <<EOF /dev/stdin /etc/sudoers.d/nogfsostasududod
+Defaults:${stad} closefrom_override, !pam_session, !pam_setcred
+
+# Uncomment lines below to use nogfsostad with sudo.
+# Allow privileged nogfsostad operations.
+#${stad} ALL=(%${org}) NOPASSWD: /usr/bin/nogfsostaudod-fd
+#${stad} ALL=(root) NOPASSWD: /usr/bin/nogfsostasuod-fd
+EOF
+        echo 'nogfsostad: `visudo -f /etc/sudoers.d/nogfsostasududod` to allow privileged nogfsostad operations.'
+    fi
+
+    install -m 0750 -o "${stad}" -g "${stad}" -d /run/nogfsostad/sududod
+;;
+
+abort-upgrade|abort-remove|abort-deconfigure)
+;;
+
+*)
+    echo >&2 "fatal: postinst called with unknown argument '$1'."
+    exit 1
+;;
+esac

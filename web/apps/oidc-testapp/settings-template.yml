@@ -1,0 +1,29 @@
+# Use `../../../tools/bin/gen-settings` to create `settings.json`.
+
+# The JSON template is a YAML string to allow expanding booleans by mustaches.
+---
+|
+    {
+        "GITIMP_CLIENT_ID": "{{ gitimpId }}",
+        "GITIMP_CLIENT_SECRET": "{{ gitimpSecret }}",
+        "GITZIB_CLIENT_ID": "{{ gitzibId }}",
+        "GITZIB_CLIENT_SECRET": "{{ gitzibSecret }}",
+        "oauthSecretKey": "{{ rand128bit-base64 }}",
+        "ldap": "dev"
+    }
+---
+id: gitimpId
+q: 'git.imp GitLab application ID to use for OAuth accounts; use scopes
+    read_user and openid; for dev, use application callback URL
+    http://localhost:3000/_oauth/gitimp:'
+---
+id: gitimpSecret
+q: 'Corresponding git.imp GitLab application secret:'
+---
+id: gitzibId
+q: 'git.imp GitLab application ID to use for OAuth accounts; use scopes
+    read_user and openid; for dev, use application callback URL
+    http://localhost:3000/_oauth/gitzib:'
+---
+id: gitzibSecret
+q: 'Corresponding git.zib GitLab application secret:'

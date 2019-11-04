@@ -1,0 +1,9 @@
+Template: nogfsosdwbakd3/nogfsostad_user
+Type: string
+Default: ngfsta
+Description: Nogfsostad user and group?
+
+Template: nogfsosdwbakd3/nogfsosdwbakd3_user
+Type: string
+Default: ngfsta
+Description: Nogfsosdwbakd3 user and group (the default is the same as Nogfsostad)?

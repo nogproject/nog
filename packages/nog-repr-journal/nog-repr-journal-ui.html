@@ -1,0 +1,29 @@
+<template name="nogJournalIcon">
+  <i class="glyphicon glyphicon-list-alt">
+  </i>
+</template>
+
+
+<template name="nogReprJournal">
+  <h3>Journal Log</h3>
+  {{#if isReady}}
+    {{#each e in journalEntries}}
+      {{> nogReprJournalEntryPanel entry=e}}
+    {{/each}}
+  {{/if}}
+</template>
+
+
+<template name="nogReprJournalEntryPanel">
+  <div class="panel panel-default">
+    <div class="panel-heading">
+      <h3 class="panel-title">{{entry.title}}</h3>
+    </div>
+    <div class="panel-body">
+      {{#if entry.hasNote}}
+        {{> nogReprMarkdownFileView entry.notectx}}
+      {{/if}}
+      <pre>{{entry.props}}</pre>
+    </div>
+  </div>
+</template>

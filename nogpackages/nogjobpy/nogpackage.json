@@ -1,0 +1,31 @@
+{
+  "programRegistry": "nog/packages",
+  "package": {
+    "name": "nogjobpy",
+    "description": "Python helpers to write nog workspace analysis programs",
+    "readme": "README.md",
+    "version": {
+      "major": 0, "minor": 0, "patch": 11
+    },
+    "dependencies": [
+      {"name": "nogpy"}
+    ],
+    "authors": [
+      {
+        "name": "Steffen Prohaska",
+        "email": "prohaska@zib.de"
+      },
+      {
+        "name": "Ulrike Homberg",
+        "email": "homberg@zib.de"
+      }
+    ]
+  },
+  "program": {
+    "code": {
+      "files": [
+        "nogjob.py"
+      ]
+    }
+  }
+}

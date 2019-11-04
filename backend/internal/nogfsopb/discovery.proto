@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+service Discovery {
+    rpc FindUntracked(FindUntrackedI) returns (stream FindUntrackedO);
+}
+
+message FindUntrackedI {
+    string registry = 1;
+    string global_root = 2;
+}
+
+// `FindUntrackedO` contains dirs relative to `global_root`.
+message FindUntrackedO {
+    repeated string candidates = 1;
+    repeated string ignored = 2;
+}

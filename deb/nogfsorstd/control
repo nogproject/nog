@@ -1,0 +1,8 @@
+Package: nogfsorstd
+Version: {{ version }}
+Depends: libcap2-bin, tartt
+Section: net
+Priority: standard
+Architecture: amd64
+Maintainer: Steffen Prohaska <prohaska@zib.de>
+Description: Nog FSO restore daemon

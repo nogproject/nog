@@ -1,0 +1,68 @@
+template(name='home')
+  .row
+    .col-md-12
+      p.
+        Login different users and follow the 'yes' links.
+
+template(name='upload')
+  .row
+    .col-md-12
+      h4 Upload
+      if testAccess 'nog-blob/upload'
+        p.
+          Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do
+          eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim
+          ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut
+          aliquip ex ea commodo consequat. Duis aute irure dolor in
+          reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
+          pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
+          culpa qui officia deserunt mollit anim id est laborum.
+      else
+        p You cannot upload.
+
+template(name='download')
+  .row
+    .col-md-12
+      h4 Download
+      if testAccess 'nog-blob/download'
+        ol
+          li file 1
+          li file 2
+          li file 3
+          li file 4
+      else
+        p You cannot download.
+
+template(name='admin')
+  .row
+    .col-md-12
+      h4 Admin
+      if testAccess 'isAdmin'
+        button.btn.btn-primary Create User
+      else
+        p You are not admin.
+
+template(name='profile')
+  .row
+    .col-md-12
+      if testAccess 'isUser'
+        h4 User Profile
+        p ...
+        if subsReady 'something'
+          p details
+        else
+          p Loading details...
+      else if testAccess 'isGuest'
+        h4 Guest Profile
+        p Wait for an admin to confirm your account.
+      else
+        p Login to see your profile.
+
+template(name='signIn')
+  .row
+    .col-md-12
+      p.
+        You need to sign in to do anything relevant.
+      p.
+        If you do not have an account, sign up and ask an admin to confirm your
+        new account.

@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+
+"""\
+Usage:
+  ln-settings [-s|--skip] <settingsdir>
+
+Options:
+  -s --skip  Skip existing symlinks
+
+`ln-settings` creates a `_private/` subdir for Meteor apps in `examples/` and
+`apps/` and creates symlinks to settings files in <settingsdir>.  <settingsdir>
+is expected to contain a subdir for each app.
+
+"""
+
+from docopt import docopt
+from os import mkdir, readlink, symlink
+from os.path import isdir, islink, isfile
+from os.path import join as pjoin
+
+links = {
+    'examples/access-testapp': [
+        'settings-localhost-test.json'
+    ],
+    'examples/blob-testapp': [
+        'settings-localhost-test.json'
+    ],
+    'examples/content-testapp': [
+        'settings-localhost-test.json'
+    ],
+    'apps/nog-app/meteor': [
+        'settings-localhost-test.json',
+        'settings-localhost-test.sh'
+    ]
+}
+
+
+def main():
+    args = docopt(__doc__)
+    settingsdir = args['<settingsdir>']
+    opt_skip = args['--skip']
+    for path, settings in links.items():
+        name = appName(path)
+        private = pjoin(path, '_private')
+        if not isdir(private):
+            print('Creating {}'.format(private))
+            mkdir(private, mode=0o700)
+        for s in settings:
+            target = pjoin(settingsdir, name, s)
+            dst = pjoin(private, s)
+            if islink(dst):
+                cur = readlink(dst)
+                if cur == target:
+                    continue
+                msg = (
+                    'Existing symlink with wrong target: '
+                    '{dst} -> {cur} ; expected {target}'
+                    .format(dst=dst, target=target, cur=cur)
+                )
+                if opt_skip:
+                    print('Warning:', msg)
+                    continue
+                else:
+                    raise RuntimeError(msg)
+            if not isfile(target):
+                msg = 'Missing target `{target}`'.format(target=target)
+                raise RuntimeError(msg)
+            print('{dst} -> {target}'.format(dst=dst, target=target))
+            symlink(target, dst)
+
+
+def appName(path):
+    parts = path.split('/')
+    if parts[-1] == 'meteor':
+        return parts[-2]
+    else:
+        return parts[-1]
+
+
+main()

@@ -1,0 +1,14 @@
+.row
+  .col-md-12
+    h4 Test options
+.row
+  .col-md-2
+    span user:
+    if currentUser
+        span.t-current-user #{currentUser.username}
+      else
+        span none
+  .col-md-8
+    button.btn.btn-default.js-logout.t-logout Logout
+    button.btn.btn-default.js-login-sprohaska.t-login-user Login sprohaska
+    button.btn.btn-default.js-login-alovelace.t-login-user2 Login alovelace

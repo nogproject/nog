@@ -1,0 +1,68 @@
+template(name='initTooltips')
+  +Template.contentBlock
+
+
+template(name='repoPin')
+  span.js-toggle(id='#{repoId}')
+    if isFavorite
+      i.fa.fa-thumb-tack.toggled-on
+    else
+      i.fa.fa-thumb-tack.toggled-off
+
+
+template(name='viewerButtons')
+  span.t-viewer-buttons
+    +initTooltips
+      unless iskindCatalog
+        if currentIsFiles
+          a.btn.btn-default.nog-no-border.active(
+              href="/#{fullName}/files/#{treePath}" data-toggle='tooltip'
+              data-placement='bottom' title='File view'
+            )
+            i.fa.fa-list
+        else
+          a.btn.btn-default.nog-no-border(
+              href="/#{fullName}/files/#{treePath}" data-toggle='tooltip'
+              data-placement='bottom' title='File view'
+            )
+            i.fa.fa-list
+      if currentIsTechnical
+        a.btn.btn-default.nog-no-border.active(
+            href="/#{fullName}/#{type}/master/#{treePath}" data-toggle='tooltip'
+            data-placement='bottom' title='Technical view'
+          )
+          i.fa.fa-keyboard-o
+      else
+        a.btn.btn-default.nog-no-border(
+            href="/#{fullName}/#{type}/master/#{treePath}" data-toggle='tooltip'
+            data-placement='bottom' title='Technical view'
+          )
+          i.fa.fa-keyboard-o
+      if iskindWorkspace
+        if currentIsWorkspace
+          a.btn.btn-default.nog-no-border.active(
+              href="/#{fullName}/workspace" data-toggle='tooltip'
+              data-placement='bottom' title='Workspace view'
+            )
+            i.fa.fa-list-alt
+        else
+          a.btn.btn-default.nog-no-border(
+              href="/#{fullName}/workspace" data-toggle='tooltip'
+              data-placement='bottom' title='Workspace view'
+            )
+            i.fa.fa-list-alt
+      if optCatalogEnabled
+        if iskindCatalog
+          if currentIsCatalog
+            a.btn.btn-default.nog-no-border.active(
+                href="/#{fullName}/catalog" data-toggle='tooltip'
+                data-placement='bottom' title='Catalog view'
+              )
+              i.fa.fa-tags
+          else
+            a.btn.btn-default.nog-no-border(
+                href="/#{fullName}/catalog" data-toggle='tooltip'
+                data-placement='bottom' title='Catalog view'
+              )
+              i.fa.fa-tags
+    | &nbsp;&nbsp;

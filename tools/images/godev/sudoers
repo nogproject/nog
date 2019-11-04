@@ -1,0 +1,35 @@
+# `nogfsostad` may run `nogfsostaudod-fd` as any user of the orgfs super-group.
+# `nogfsostad` runs as root or a user of group `ngfsta`; see
+# `../../../docker-compose.yml` and `./build/add-orgfs-groups`.
+Defaults:root closefrom_override, !pam_session, !pam_setcred
+root ALL=(%ag_org) NOPASSWD: /go/bin/nogfsostaudod-fd
+root ALL=(root) NOPASSWD: /go/bin/nogfsostasuod-fd
+Defaults:%ngfsta closefrom_override, !pam_session, !pam_setcred
+%ngfsta ALL=(%ag_org) NOPASSWD: /go/bin/nogfsostaudod-fd
+%ngfsta ALL=(root) NOPASSWD: /go/bin/nogfsostasuod-fd
+
+# `nogfsostad` may run `nogfsostaudo-fd` via `nogfsostasududod`, which runs as
+# user daemon.
+Defaults:daemon closefrom_override, !pam_session, !pam_setcred
+daemon ALL=(%ag_org) NOPASSWD: /go/bin/nogfsostaudod-fd
+daemon ALL=(root) NOPASSWD: /go/bin/nogfsostasuod-fd
+
+# nogfsotard cfgPrivGitRemote='sudo'
+ngftar ALL=(root) NOPASSWD: /usr/local/bin/git-receive-pack-get-owner /*
+ngftar ALL=(ngfsta2,ngfsta3) NOPASSWD: /usr/bin/git-receive-pack
+
+# nogfsotard cfgPrivGitForEachRef='sudo'
+ngftar ALL=(root) NOPASSWD: /usr/local/lib/nogfsotard/stat-dir-owner /*
+ngftar ALL=(ngfsta2,ngfsta3) NOPASSWD: /usr/local/lib/nogfsotard/git-for-each-ref-dir /*
+ngftar ALL=(ngfsta2,ngfsta3) NOPASSWD: /usr/local/lib/nogfsotard/git-rev-parse-branch-dir master-stat /*
+ngftar ALL=(ngfsta2,ngfsta3) NOPASSWD: /usr/local/lib/nogfsotard/git-is-newer-branch-dir-duration master-stat /* *
+ngftar ALL=(ngfsta2,ngfsta3) NOPASSWD: /usr/local/lib/nogfsotard/git-is-immutable-fso-stat-dir /*
+
+# nogfsotard cfgPrivGitArchive='sudo'
+ngftar ALL=(root) NOPASSWD: /usr/local/lib/nogfsotard/stat-dir-owner /*
+ngftar ALL=(ngfsta2,ngfsta3) NOPASSWD: /usr/local/lib/nogfsotard/git-rev-parse-is-valid-branch-dir master-* /*
+ngftar ALL=(ngfsta2,ngfsta3) NOPASSWD: /usr/local/lib/nogfsotard/git-archive-branch-dir master-* /*
+
+# nogfsosdwbakd3 cfgPrivGitForEachRef='sudo'
+ngfbak ALL=(root) NOPASSWD: /usr/local/lib/nogfsosdwbakd3/stat-dir-owner /*
+ngfbak ALL=(ngfsta2,ngfsta3) NOPASSWD: /usr/local/lib/nogfsosdwbakd3/git-for-each-ref-dir /*

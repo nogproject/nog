@@ -1,0 +1,106 @@
+#!/bin/bash
+
+set -o errexit -o nounset -o pipefail -o noglob
+
+size=50
+filename="testdata.dat"
+headers="curl-headers.txt"
+apiUrl="http://localhost:3000/api/blobs"
+opt_v=-v
+opt_v=
+
+sign_req() {
+    ../../tools/bin/sign-req "$@"
+}
+
+main() {
+    genRandomData
+    sha1=$(openssl sha1 <"${filename}")
+    read -r s3UploadId uploadHref nParts <<<"$(startUpload)"
+    parts="$(uploadParts)"
+    completeUpload
+}
+
+uploadParts() {
+    printf '[\n'
+    for ((i=0; $i < $nParts; i++)); do
+        getPart $i |
+        while read -r partNumber start end href; do
+            [ -z "${href}" ] && continue
+            echo >&2 uploadS3 ${start} ${end} ${href}
+            [ ${i} -gt 1 ] && printf ',\n'
+            printf '{\n'
+            printf '"PartNumber": %d, \n' ${partNumber}
+            printf '"ETag": ' && uploadS3 ${start} ${end} ${href}
+            printf '}'
+        done
+    done
+    printf '\n]\n'
+}
+
+genRandomData() {
+   head -c ${size} </dev/urandom >"${filename}"
+}
+
+startUpload() {
+    resStart="$(startUploadPost)"
+    python >&2 <<<"${resStart}" -m json.tool
+    python <<<"${resStart}" -c '
+import sys, json
+d = json.load(sys.stdin)
+d = d["data"]
+print d["upload"]["id"], d["upload"]["href"], d["parts"]["count"]
+'
+}
+
+startUploadPost() {
+    curl ${opt_v} -s -H 'Content-Type: application/json' -X POST --data @- $(sign_req POST "${apiUrl}/${sha1}/uploads") <<EOF
+{
+    "size": ${size},
+    "name": "${filename}"
+}
+EOF
+}
+
+getPart() {
+    res="$(getPartGet "$1")"
+    python >&2 <<<"${res}" -m json.tool
+    python <<<"${res}" -c '
+import sys, json
+d = json.load(sys.stdin)
+d = d["data"]
+d = d["items"]
+for p in d:
+    print p["partNumber"], p["start"], p["end"], p["href"]
+'
+}
+
+getPartGet() {
+    local offset="$1"
+    curl ${opt_v} -s -H 'Content-Type: application/json' -X GET $(sign_req GET "${apiUrl}/${sha1}/uploads/${s3UploadId}/parts?offset=${offset}&limit=1")
+}
+
+# Curl must be told to send an empty Content-Type to match the signature.
+uploadS3() {
+    local start=$1
+    local end=$2
+    local url="$3"
+    dd if="${filename}" bs=1 skip=${start} count=$(( ${end} - ${start} )) 2>/dev/null |
+    curl ${opt_v} -s --dump-header "${headers}" -H 'Content-Type:' -X PUT --data-binary @- "${url}"
+    grep '^ETag' <"${headers}" | cut -d ':' -f 2
+}
+
+completeUpload() {
+    res="$(completeUploadPut)"
+    python >&2 <<<"${res}" -m json.tool
+}
+
+completeUploadPut() {
+    curl ${opt_v} -s -H 'Content-Type: application/json' -X POST --data @- $(sign_req POST "${uploadHref}") <<EOF
+{
+    "s3Parts": ${parts}
+}
+EOF
+}
+
+main "$@"

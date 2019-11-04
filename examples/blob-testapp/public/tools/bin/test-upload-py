@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+
+# This example demonstrates how to upload to nog-blob.  `startUpload()` starts
+# a new upload.  It limits the result to a single part part description,
+# because the upload happens synchronously and S3 URLs expire; the parts should
+# be requested as required and the S3 upload be started immediately.  `main()`
+# loops to upload parts to S3 and get the next part (by following the `next`
+# link in the previous `parts` result) until all parts have been processed.
+# The final step is to complete the upload by posting to the `upload.href` from
+# the original response.
+
+import requests
+import json
+import random
+import string
+import hashlib
+import os
+from subprocess import check_output
+
+# size = 10 * 1000 * 1000
+size = 50
+filename = 'testdata.dat'
+
+urlbase = 'http://localhost:3000/api/blobs'
+headers = {'Content-Type': 'application/json'}
+
+def main():
+    data = randomdata(size)
+    sha1 = hashlib.sha1(data).hexdigest()
+    res = startUpload(sha1)
+    completeUploadUrl = res["upload"]["href"]
+    s3Parts = []
+    parts = res["parts"]
+    while True:
+        part = parts["items"][0]
+        etag = putS3(part, data)
+        s3Parts.append({
+                'PartNumber': part["partNumber"],
+                'ETag': etag
+            })
+        nextPartUrl = parts["next"]
+        if not nextPartUrl:
+            break
+        parts = getNextParts(nextPartUrl)
+
+    res = postComplete(completeUploadUrl, s3Parts)
+    print(json.dumps(res, indent=2))
+
+
+def sign_req(method, url):
+    res = check_output(['../../tools/bin/sign-req', method, url])
+    return res.decode('utf-8').rstrip()
+
+def randomdata(length):
+    return os.urandom(length)
+
+def startUpload(sha1):
+    # Limit result to a single part (see intro above).
+    url = '{0}/{1}/uploads?limit=1'.format(urlbase, sha1)
+    url = sign_req('POST', url)
+    content = { "size": size, "name": filename }
+    res = requests.post(url, headers=headers, data=json.dumps(content))
+    if res.status_code != 201:
+        print(res.json())
+        res.raise_for_status()
+    data = res.json()["data"]
+    print(json.dumps(data, indent=2))
+    return data
+
+def getNextParts(url):
+    url = sign_req('GET', url)
+    res = requests.get(url, headers=headers)
+    if res.status_code != requests.codes.ok:
+        print(res.json())
+        res.raise_for_status()
+    data = res.json()["data"]
+    print(json.dumps(data, indent=2))
+    return data
+
+def putS3(part, data):
+    print('s3', part)
+    start = part["start"]
+    end = part["end"]
+    res = requests.put(part["href"], data=data[start:end])
+    res.raise_for_status()
+    etag = res.headers["etag"]
+    print('etag', etag)
+    return etag
+
+def postComplete(url, parts):
+    url = sign_req('POST', url)
+    content = {'s3Parts': parts}
+    res = requests.post(url, headers=headers, data=json.dumps(content))
+    if res.status_code != 201:
+        print(res.json())
+        res.raise_for_status()
+    return res.json()["data"]
+
+main()

@@ -1,0 +1,268 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+# By default build images without registry.  When running in a CI environment,
+# `ci-make` sets a registry to build images that can be pushed.
+registry="${NOG_IMAGE_REGISTRY:-}"
+# Ensure trailing slash.
+case ${registry} in
+'') ;;
+*/) ;;
+*) registry="${registry}/" ;;
+esac
+
+# `products` will be filled in `debX()`.
+declare -a products
+
+main() {
+    dockerNogApp2
+    dockerNogfsoregd
+    dockerNogfsoctl
+    dockerNogfsosto
+
+    p='product/docker-images.yml'
+    echo "    SAVE ${p}"
+    printf '%s\n' "${products[@]}" >"${p}"
+
+    echo '    SUMMARY docker'
+    echo
+    echo 'Docker images:'
+    printf '%s\n' "${products[@]}"
+    echo
+    echo '    DONE'
+}
+
+dockerNogApp2() {
+    name='nog-app-2'
+    src="docker/${name}"
+
+    version="$(grep "^${name}:" versions.yml | cut -d : -f 2 | tr -d ' ')"
+    case ${version} in
+    *-*)
+        debVersion="$(tr '-' '~' <<<"${version}")+${BUILD_TAG:-unspecified-build-tag}"
+        version="${version}-${BUILD_TAG:-unspecified-build-tag}"
+        ;;
+    *)
+        debVersion="${version}"
+        ;;
+    esac
+
+    deb="${name}_${debVersion}_amd64.deb"
+    ln "product/deb/${deb}" "${src}/${deb}"
+    trap "rm -f '${src}/${deb}'" EXIT
+
+    img="${registry}${name}:${version}"
+    echo "    DOCKER BUILD ${img}"
+    docker build \
+        -t "${img}" \
+        --build-arg "NOG_APP_2_DEB=${deb}" \
+        "${src}"
+    products+=( "nogApp2: '${img}'" )
+
+    rm "${src}/${deb}"
+    trap - EXIT
+}
+
+dockerNogfsoregd() {
+    name='nogfsoregd'
+    src="docker/${name}"
+
+    version="$(grep "^${name}:" versions.yml | cut -d : -f 2 | tr -d ' ')"
+    case ${version} in
+    *-*)
+        debVersion="$(tr '-' '~' <<<"${version}")+${BUILD_TAG:-unspecified-build-tag}"
+        version="${version}-${BUILD_TAG:-unspecified-build-tag}"
+        ;;
+    *)
+        debVersion="${version}"
+        ;;
+    esac
+
+    deb="${name}_${debVersion}_amd64.deb"
+    ln "product/deb/${deb}" "${src}/${deb}"
+    trap "rm -f '${src}/${deb}'" EXIT
+
+    img="${registry}${name}:${version}"
+    echo "    DOCKER BUILD ${img}"
+    docker build \
+        -t "${img}" \
+        --build-arg "NOGFSOREGD_DEB=${deb}" \
+        "${src}"
+    products+=( "nogfsoregd: '${img}'" )
+
+    rm "${src}/${deb}"
+    trap - EXIT
+}
+
+dockerNogfsoctl() {
+    name='nogfsoctl'
+    src="docker/${name}"
+
+    version="$(grep "^${name}:" versions.yml | cut -d : -f 2 | tr -d ' ')"
+    case ${version} in
+    *-*)
+        debVersion="$(tr '-' '~' <<<"${version}")+${BUILD_TAG:-unspecified-build-tag}"
+        version="${version}-${BUILD_TAG:-unspecified-build-tag}"
+        ;;
+    *)
+        debVersion="${version}"
+        ;;
+    esac
+
+    deb="${name}_${debVersion}_amd64.deb"
+    ln "product/deb/${deb}" "${src}/${deb}"
+    trap "rm -f '${src}/${deb}'" EXIT
+
+    img="${registry}${name}:${version}"
+    echo "    DOCKER BUILD ${img}"
+    docker build \
+        -t "${img}" \
+        --build-arg "NOGFSOCTL_DEB=${deb}" \
+        "${src}"
+    products+=( "nogfsoctl: '${img}'" )
+
+    rm "${src}/${deb}"
+    trap - EXIT
+}
+
+dockerNogfsosto() {
+    name='nogfsosto'
+    src="docker/${name}"
+
+    version="$(getVersion 'nogfso')"
+
+    bcpfsPermsDeb='bcpfs-perms_1.2.3_amd64.deb'
+
+    n='tar-incremental-mtime'
+    v="$(getDebVersion "${n}")"
+    tarIncrementalMtimeDeb="${n}_${v}_amd64.deb"
+
+    n='git-fso'
+    v="$(getDebVersion "${n}")"
+    gitFsoDeb="${n}_${v}_amd64.deb"
+
+    n='tartt'
+    v="$(getDebVersion "${n}")"
+    tarttDeb="${n}_${v}_amd64.deb"
+
+    n='nogfsoctl'
+    v="$(getDebVersion "${n}")"
+    nogfsoctlDeb="${n}_${v}_amd64.deb"
+
+    n='nogfsostad'
+    v="$(getDebVersion "${n}")"
+    nogfsostadDeb="${n}_${v}_amd64.deb"
+
+    n='nogfsoschd'
+    v="$(getDebVersion "${n}")"
+    nogfsoschdDeb="${n}_${v}_amd64.deb"
+
+    n='nogfsotard'
+    v="$(getDebVersion "${n}")"
+    nogfsotardDeb="${n}_${v}_amd64.deb"
+
+    n='nogfsotarsecbakd'
+    v="$(getDebVersion "${n}")"
+    nogfsotarsecbakdDeb="${n}_${v}_amd64.deb"
+
+    n='nogfsosdwbakd3'
+    v="$(getDebVersion "${n}")"
+    nogfsosdwbakd3Deb="${n}_${v}_amd64.deb"
+
+    n='nogfsorstd'
+    v="$(getDebVersion "${n}")"
+    nogfsorstdDeb="${n}_${v}_amd64.deb"
+
+    n='nogfsodomd'
+    v="$(getDebVersion "${n}")"
+    nogfsodomdDeb="${n}_${v}_amd64.deb"
+
+    cleanup() {
+        rm -f \
+            "${src}/${bcpfsPermsDeb}" \
+            "${src}/${tarIncrementalMtimeDeb}" \
+            "${src}/${gitFsoDeb}" \
+            "${src}/${tarttDeb}" \
+            "${src}/${nogfsoctlDeb}" \
+            "${src}/${nogfsostadDeb}" \
+            "${src}/${nogfsoschdDeb}" \
+            "${src}/${nogfsotardDeb}" \
+            "${src}/${nogfsotarsecbakdDeb}" \
+            "${src}/${nogfsosdwbakd3Deb}" \
+            "${src}/${nogfsorstdDeb}" \
+            "${src}/${nogfsodomdDeb}" \
+        ;
+    }
+
+    trap 'cleanup' EXIT
+    ln "tools/images/godev/${bcpfsPermsDeb}" "${src}/${bcpfsPermsDeb}"
+    ln "product/deb/${tarIncrementalMtimeDeb}" "${src}/${tarIncrementalMtimeDeb}"
+    ln "product/deb/${gitFsoDeb}" "${src}/${gitFsoDeb}"
+    ln "product/deb/${tarttDeb}" "${src}/${tarttDeb}"
+    ln "product/deb/${nogfsoctlDeb}" "${src}/${nogfsoctlDeb}"
+    ln "product/deb/${nogfsostadDeb}" "${src}/${nogfsostadDeb}"
+    ln "product/deb/${nogfsoschdDeb}" "${src}/${nogfsoschdDeb}"
+    ln "product/deb/${nogfsotardDeb}" "${src}/${nogfsotardDeb}"
+    ln "product/deb/${nogfsotarsecbakdDeb}" "${src}/${nogfsotarsecbakdDeb}"
+    ln "product/deb/${nogfsosdwbakd3Deb}" "${src}/${nogfsosdwbakd3Deb}"
+    ln "product/deb/${nogfsorstdDeb}" "${src}/${nogfsorstdDeb}"
+    ln "product/deb/${nogfsodomdDeb}" "${src}/${nogfsodomdDeb}"
+
+    img="${registry}${name}:${version}"
+    echo "    DOCKER BUILD ${img}"
+    docker build \
+        -t "${img}" \
+        --build-arg "TAR_INCREMENTAL_MTIME_DEB=${tarIncrementalMtimeDeb}" \
+        --build-arg "BCPFS_PERMS_DEB=${bcpfsPermsDeb}" \
+        --build-arg "GIT_FSO_DEB=${gitFsoDeb}" \
+        --build-arg "TARTT_DEB=${tarttDeb}" \
+        --build-arg "NOGFSOCTL_DEB=${nogfsoctlDeb}" \
+        --build-arg "NOGFSOSTAD_DEB=${nogfsostadDeb}" \
+        --build-arg "NOGFSOSCHD_DEB=${nogfsoschdDeb}" \
+        --build-arg "NOGFSOTARD_DEB=${nogfsotardDeb}" \
+        --build-arg "NOGFSOTARSECBAKD_DEB=${nogfsotarsecbakdDeb}" \
+        --build-arg "NOGFSOSDWBAKD3_DEB=${nogfsosdwbakd3Deb}" \
+        --build-arg "NOGFSORSTD_DEB=${nogfsorstdDeb}" \
+        --build-arg "NOGFSODOMD_DEB=${nogfsodomdDeb}" \
+        "${src}"
+    products+=( "nogfsosto: '${img}'" )
+
+    cleanup
+    trap - EXIT
+}
+
+getVersion() {
+    local name="$1"
+    local v
+
+    v="$(grep "^${name}:" versions.yml | cut -d : -f 2 | tr -d ' ')"
+    case ${v} in
+    *-*)
+        v="${v}-${BUILD_TAG:-unspecified-build-tag}"
+        ;;
+    esac
+
+    printf '%s' "${v}"
+}
+
+getDebVersion() {
+    local name="$1"
+    local v
+
+    v="$(grep "^${name}:" versions.yml | cut -d : -f 2 | tr -d ' ')"
+    case ${v} in
+    *-*)
+        v="$(tr '-' '~' <<<"${v}")+${BUILD_TAG:-unspecified-build-tag}"
+        ;;
+    esac
+
+    printf '%s' "${v}"
+}
+
+die() {
+    echo >&2 "fatal: $*"
+    exit 1
+}
+
+main "$@"

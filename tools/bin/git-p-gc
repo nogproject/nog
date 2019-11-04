@@ -1,0 +1,91 @@
+#!/bin/bash
+
+set -o errexit -o nounset -o pipefail -o noglob
+
+usage() {
+    cat <<\EOF
+Usage:
+  git-p-gc
+
+`git-p-gc` collects origin/p/ branches on attic and deletes them if they have
+been merged to master.
+
+EOF
+    exit
+}
+
+main() {
+    [ $# -gt 0 ] && usage
+
+    git fetch
+    requireAttic
+    lsOriginP |
+    while read -r sha1 pbranch; do
+        if latestIsOnMaster ${sha1}; then
+            printf 'gc %s' "${pbranch}"
+            if isOnOriginAttic ${sha1}; then
+                printf ', was already on origin/attic'
+                git push --quiet origin ":refs/heads/${pbranch}"
+                printf ', deleted at origin'
+            else
+                tieAttic "${sha1}" "${pbranch}"
+                printf ', tied to attic'
+            fi
+            printf '\n'
+        else
+            printf 'unmerged %s\n' "${pbranch}"
+        fi
+    done
+    echo
+    echo 'Check and push `attic`.'
+    echo 'Then run again to delete branches.'
+}
+
+tieAttic() {
+    local sha1="$1"
+    local pbranch="$2"
+    local tree old new
+    tree=$(git rev-parse --verify "${sha1}^{tree}")
+    old=$(git rev-parse --verify attic)
+    new=$(git commit-tree -p ${old} -p ${sha1} -m "gc '${pbranch}'" ${tree})
+    git update-ref -m 'gc p/ branch' refs/heads/attic ${new} ${old}
+}
+
+lsOriginP() {
+    git show-ref |
+    grep ' refs/remotes/origin/p/' |
+    cut -b 1-41,62-
+}
+
+latestIsOnMaster() {
+    sha1="$1"
+    latest=$(git rev-parse "${sha1}^")
+    [ -z "$(git rev-list -n 1 "origin/master..${latest}")" ]
+}
+
+isOnOriginAttic() {
+    local sha1="$1"
+    [ -z "$(git rev-list -n 1 "origin/attic..${sha1}")" ]
+}
+
+requireAttic() {
+    isValidRef origin/attic || die 'Missing `origin/attic`.'
+    isValidRef attic || die 'Missing `attic`.'
+    commitEquals attic origin/attic ||
+        die 'Local and remote `attic` point to different commits.'
+}
+
+isValidRef() {
+    git rev-parse -q --verify >/dev/null 2>&1 "$1"
+}
+
+commitEquals() {
+    [ $(git rev-parse --verify "$1") = $(git rev-parse --verify "$2") ]
+}
+
+die() {
+    printf >&2 'Error: %s\n' "$1"
+    exit 1
+}
+
+main "$@"

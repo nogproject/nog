@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+
+import json
+import nog
+import nogjob as nj
+import os.path
+import sys
+import shutil
+from skimage import io
+import numpy as np
+from io import StringIO
+
+maxWH = 300
+paramsdefault = {
+    "maxWidth": 200,
+    "maxHeight": 200,
+    "variants": [
+        {"name": "default"},
+        {},
+        {"name": "large", "maxHeight": 299},
+        {"name": "small", "maxHeight": 100},
+        {"maxWidth": 150}
+        ],
+    "nog": {
+        "program": {
+            "name": "photo-gallery"
+        },
+        "workspaceRepo": "nog/example_photo-gallery_2015"
+    }
+}
+
+
+def main():
+    tmpdir = os.getcwd() + '/tmp'
+    mkTmpDir(tmpdir)
+
+    paramNames = {"maxWidth", "maxHeight"}
+    params = getParameters()
+    for i in paramNames:
+        if i not in params:
+            raise RuntimeError('Default parameters are not available.')
+
+    variants = computeVariants(params, paramNames)
+
+    # Parameter check. When running the program in the Nog webapp, exception
+    # messages appear in the job log, so they can be used for tracking errors.
+    # When running locally, exceptions simply appear in the console.
+    for i in variants:
+        if i['maxWidth'] >= maxWH or i['maxHeight'] >= maxWH:
+            raise RuntimeError(
+                    'Expected a reasonable thumbnail size. Set "maxWidth"'
+                    ' and "maxHeight <= 300 and restart the program.')
+
+    # `NogJob` object evaluates the set of parameters,
+    # configures the object for local or job mode,
+    # and returns the data to process:
+    nogjob = nj.NogJob(params)
+    inputData = nogjob.prepareComputation()
+
+    [inputData, warning]= setUniqueNames(inputData)
+
+    progressTotal = len(inputData.content['entries']) * len(variants)
+    progrCurr = 0
+
+    if len(variants) == 1:
+        [results, progrCurr] = createPhotoGallery(nogjob, variants[0],
+                inputData, tmpdir, progressTotal, progrCurr, warning)
+    else:
+        results = nog.Tree()
+        results.name = os.path.basename(params['nog']['program']['name'])
+        for i in variants:
+            printmsg('\n', i)
+            [res, progrCurr] = createPhotoGallery(nogjob, i, inputData, tmpdir,
+                progressTotal, progrCurr, warning)
+            results.append(res)
+
+    # Commit result and close the job
+    nogjob.commitResult(results)
+
+    rmTmpDir(tmpdir)
+
+
+def getParameters():
+    """
+    When running the script from the Nog webapp, the parameters are passed to
+    the script as a JSON string through the `--params` argument. When running
+    locally, the `paramsdefault` are used.
+    """
+    if len(sys.argv) != 3 and len(sys.argv) != 1:
+        raise RuntimeError('Invalid number of args.')
+    if len(sys.argv) == 3:
+        if sys.argv[1] != '--params':
+            raise RuntimeError('Invalid arguments.')
+        else:
+            params = json.loads(sys.argv[2])
+    if len(sys.argv) == 1:
+        params = paramsdefault
+    return params
+
+
+def createPhotoGallery(nogjob, variant, inputData, dir, progrTotal,
+        progrCurr, warning):
+
+    results = nog.Tree()
+    results.name = variant['name']
+    s = ''
+    for k in sorted(variant):
+        s = s + k + ' = ' + str(variant[k]) + '; '
+    results.meta['description'] = s
+
+    maxW = variant["maxWidth"]
+    maxH = variant["maxHeight"]
+
+    tmpdir = dir + '/' + results.name
+    mkTmpDir(tmpdir)
+
+    doc = nj.Document('index.md')
+    doc.insertHeader('Photo Gallery', 1)
+    # Use relative paths to insert links directing to the 'file view'
+    doc.insertLink('Browse results in file view', '../'+results.name)
+    doc.insertLineBreak()
+    if warning:
+        doc.insertParagraph(warning)
+
+    for d in inputData.entries():
+        if not os.path.isfile(tmpdir + '/' + d.name):
+            d.linkBlob(tmpdir + '/' + d.name)
+        thumb = imageToThumbnail(tmpdir + '/' + d.name, maxW, maxH)
+
+        res = nog.Object()
+        res.name = 'thumb_' + d.name
+        io.imsave(tmpdir + '/' + res.name, thumb)
+        res.blob = tmpdir + '/' + res.name
+        results.append(res)
+
+        doc.insertImage(res.name, res.name)
+        doc.insertText(' ')
+
+        progrCurr = progrCurr + 1
+
+        # Post progress updates to the `NogJob`,
+        # which posts it to the Nog web UI.
+        nogjob.context.progress(progrCurr, progrTotal)
+        nj.printmsg('Processed {1}%: {0}'.format(
+            d.name, nogjob.context.status))
+
+    gallery = nog.Object()
+    gallery.name = doc.name
+    gallery.meta['content'] = doc.content
+    results.insert(0, gallery)
+
+    return [results, progrCurr]
+
+
+def imageToThumbnail(path, maxW, maxH):
+    img = io.imread(path)
+    (x, y, z) = img.shape
+
+    if x <= maxW and y <= maxH:
+        return img
+    else:
+        if x > y:
+            fac = x / maxW
+        else:
+            fac = y / maxH
+
+    mx = int(x / fac)
+    my = int(y / fac)
+
+    newimg = np.zeros((mx, my, z), dtype='uint8')
+    for col in range(mx):
+        for row in range(my):
+            p = img[int(col*fac), int(row*fac), :]
+            newimg[col, row, :] = p
+
+    return newimg
+
+
+def mkTmpDir(tmpdir):
+    if os.path.isdir(tmpdir):
+        shutil.rmtree(tmpdir)
+    os.makedirs(tmpdir)
+
+
+def rmTmpDir(tmpdir):
+    shutil.rmtree(tmpdir)
+
+
+def computeVariants(params, paramNames):
+    defaultParams = {}
+    variants = []
+    name = os.path.basename(params['nog']['program']['name'])
+
+    for i in paramNames:
+        defaultParams[i] = params[i]
+
+    try:
+        for i in params["variants"]:
+            variants.append(parseVariant(defaultParams, i))
+    except:
+      pass
+
+    if len(variants) > 0:
+        defaultParams["name"] = "defaultParameters"
+        variants.insert(0, defaultParams)
+    else:
+        defaultParams["name"] = name
+        variants.append(defaultParams)
+
+    print('vars ', variants)
+    return variants
+
+def parseVariant(defaultParams, var):
+    variant = {}
+    for k, v in defaultParams.items():
+        try:
+            variant[k] = var[k]
+        except:
+            variant[k] = v
+
+    try:
+        variant["name"] = var["name"]
+    except:
+        variant["name"] = autoName(variant)
+
+    return variant
+
+def autoName(var):
+    name = ""
+    i = 0
+    for k, v in var.items():
+        name = name + k + str(v)
+        if i < len(var) - 1:
+            name = name + "_"
+            i += 1
+
+    return name
+
+
+def printmsg(*args):
+    print(*args)
+    sys.stdout.flush()
+
+
+def setUniqueNames(tree):
+    changed = False
+    warning = ''
+
+    for o1 in tree.entries():
+        count = 0
+        if o1.type is 'object':
+            for o2 in tree.entries():
+                if o2.type is 'object':
+                    if o1.sha1 != o2.sha1 and \
+                       o1.name == o2.name:
+                        count += 1
+                        filename, fileExtension = os.path.splitext(o2.name)
+                        o2.name = filename + '-' + str(count) + fileExtension
+                        changed = True
+
+    if changed:
+        warning = '**<span style="color:red">Warning: </span>** The program ' \
+                  'has changed some names of your input files, because your ' \
+                  'datalist contains multiple files with the same name.'
+
+    return [tree, warning]
+
+
+main()

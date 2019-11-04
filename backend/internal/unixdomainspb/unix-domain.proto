@@ -1,0 +1,204 @@
+syntax = "proto3";
+
+package unixdomains;
+option go_package = "unixdomainspb";
+
+service UnixDomains {
+    rpc CreateUnixDomain(CreateUnixDomainI) returns (CreateUnixDomainO);
+    rpc GetUnixDomain(GetUnixDomainI) returns (GetUnixDomainO);
+    rpc GetUnixUser(GetUnixUserI) returns (GetUnixUserO);
+
+    rpc CreateUnixGroup(CreateUnixGroupI) returns (CreateUnixGroupO);
+    rpc DeleteUnixGroup(DeleteUnixGroupI) returns (DeleteUnixGroupO);
+
+    rpc CreateUnixUser(CreateUnixUserI) returns (CreateUnixUserO);
+    rpc DeleteUnixUser(DeleteUnixUserI) returns (DeleteUnixUserO);
+
+    rpc AddUnixGroupUser(AddUnixGroupUserI) returns (AddUnixGroupUserO);
+    rpc RemoveUnixGroupUser(RemoveUnixGroupUserI) returns (RemoveUnixGroupUserO);
+
+    rpc UnixDomainEvents(UnixDomainEventsI) returns (stream UnixDomainEventsO);
+}
+
+// `UnixDomainEvent` is a subset of the full `nogevents.Event` message.
+message UnixDomainEvent {
+    enum Type {
+        EV_UNSPECIFIED = 0;
+
+        // reserved 220 to 230; // unixdomains
+        EV_UNIX_DOMAIN_CREATED = 221;
+        EV_UNIX_GROUP_CREATED = 222;
+        EV_UNIX_USER_CREATED = 223;
+        EV_UNIX_GROUP_USER_ADDED = 224;
+        EV_UNIX_GROUP_USER_REMOVED = 225;
+        EV_UNIX_USER_DELETED = 226;
+        EV_UNIX_GROUP_DELETED = 227;
+        EV_UNIX_DOMAIN_DELETED = 228;
+    }
+
+    // reserved 1 to 9; // common event header
+    Type event = 1;
+    bytes id = 2;
+    bytes parent = 3;
+    reserved 4 to 9; // future common header use
+
+    // reserved 110 to 119; // unixdomains
+    string unix_domain_name = 111;
+    bytes unix_domain_id = 112;
+    string unix_group = 113;
+    uint32 unix_gid = 114;
+    string unix_user = 115;
+    uint32 unix_uid = 116;
+}
+
+message UnixDomainEventsI {
+    reserved 1; // Potential future header.
+    bytes domain_id = 2;
+    bytes after = 3;
+    bool watch = 4;
+}
+
+message UnixDomainEventsO {
+    reserved 1; // Potential future header.
+    repeated UnixDomainEvent events = 2;
+    bool will_block = 3;
+}
+
+message CreateUnixDomainI {
+    reserved 1; // Potential future header.
+    string domain_name = 2;
+    bytes main_vid = 3;
+}
+
+message CreateUnixDomainO {
+    reserved 1; // Potential future header.
+    bytes domain_id = 2;
+    bytes domain_vid = 3;
+    bytes main_vid = 4;
+}
+
+message GetUnixDomainI {
+    reserved 1; // Potential future header.
+    bytes domain_id = 2;
+    string domain_name = 3;
+}
+
+message GetUnixDomainO {
+    reserved 1; // Potential future header.
+    bytes domain_id = 2;
+    bytes domain_vid = 3;
+    string domain_name = 4;
+    repeated UnixDomainUser users = 5; // only User, Uid, Gid.
+    repeated UnixDomainGroup groups = 6;
+}
+
+message UnixDomainUser {
+    reserved 1; // Potential future header.
+    string user = 2;
+    uint32 uid = 3;
+    uint32 gid = 4;
+    repeated uint32 gids = 5;
+}
+
+message UnixDomainGroup {
+    reserved 1; // Potential future header.
+    string group = 2;
+    uint32 gid = 3;
+    repeated uint32 uids = 4;
+}
+
+message GetUnixUserI {
+    reserved 1; // Potential future header.
+    string domain_name = 2;
+    string user = 3;
+}
+
+message GetUnixUserO {
+    reserved 1; // Potential future header.
+    bytes domain_id = 2;
+    bytes domain_vid = 3;
+    string domain_name = 4;
+    string user = 5;
+    string group = 6;
+    repeated string groups = 7;
+    uint32 uid = 8;
+    uint32 gid = 9;
+    repeated uint32 gids = 10;
+}
+
+message CreateUnixGroupI {
+    reserved 1; // Potential future header.
+    bytes domain_id = 2;
+    bytes domain_vid = 3;
+    string name = 4;
+    uint32 gid = 5;
+}
+
+message CreateUnixGroupO {
+    reserved 1; // Potential future header.
+    bytes domain_vid = 2;
+}
+
+message DeleteUnixGroupI {
+    reserved 1; // Potential future header.
+    bytes domain_id = 2;
+    bytes domain_vid = 3;
+    uint32 gid = 4;
+}
+
+message DeleteUnixGroupO {
+    reserved 1; // Potential future header.
+    bytes domain_vid = 2;
+}
+
+message CreateUnixUserI {
+    reserved 1; // Potential future header.
+    bytes domain_id = 2;
+    bytes domain_vid = 3;
+    string name = 4;
+    uint32 uid = 5;
+    uint32 gid = 6;
+}
+
+message CreateUnixUserO {
+    reserved 1; // Potential future header.
+    bytes domain_vid = 2;
+}
+
+message DeleteUnixUserI {
+    reserved 1; // Potential future header.
+    bytes domain_id = 2;
+    bytes domain_vid = 3;
+    uint32 uid = 4;
+}
+
+message DeleteUnixUserO {
+    reserved 1; // Potential future header.
+    bytes domain_vid = 2;
+}
+
+message AddUnixGroupUserI {
+    reserved 1; // Potential future header.
+    bytes domain_id = 2;
+    bytes domain_vid = 3;
+    uint32 gid = 4;
+    uint32 uid = 5;
+}
+
+message AddUnixGroupUserO {
+    reserved 1; // Potential future header.
+    bytes domain_vid = 2;
+}
+
+message RemoveUnixGroupUserI {
+    reserved 1; // Potential future header.
+    bytes domain_id = 2;
+    bytes domain_vid = 3;
+    uint32 gid = 4;
+    uint32 uid = 5;
+}
+
+message RemoveUnixGroupUserO {
+    reserved 1; // Potential future header.
+    bytes domain_vid = 2;
+}

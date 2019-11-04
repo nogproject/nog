@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+// A `WhoDate` is a person and a date, as used for Git author and committer
+// information.  `date` is an RFC 3339 string.
+message WhoDate {
+    string name = 1;
+    string email = 2;
+    string date = 3;
+}
+
+message GitUser {
+    reserved 1; // Potential future header.
+    string name = 2;
+    string email = 3;
+}

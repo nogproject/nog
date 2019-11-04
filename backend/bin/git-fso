@@ -1,0 +1,1930 @@
+#!/usr/bin/env bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+semver='0.1.0'
+
+version() {
+    echo "git-fso-${semver}"
+    exit 0
+}
+
+usage() {
+    cat <<\EOF
+Usage:
+  git-fso init [--bundle-subdirs|--ignore-subdirs|--ignore-most] --observe <realdir>
+  git-fso reinit (--enter-subdirs|--bundle-subdirs|--ignore-subdirs|--ignore-most)
+  git-fso stat [--refresh-index] [--mtime-range|--mtime-range-only]
+  git-fso sha [--refresh-index]
+  git-fso content
+  git-fso archive [--refresh-index]
+  git-fso sot
+  git-fso tos
+  git-fso apply-stub
+  git-fso status [-z] --stat
+
+Options:
+  --refresh-index   run `git update-index --refresh` before checking files.
+  --mtime-range     always check toplevel mtime range.
+  --mtime-range-only  only update toplevel stat, ingnoring other changes.
+  --enter-subdirs   track files in sub-directories.
+  --bundle-subdirs  track toplevel files and record summary information about
+                    first-level sub-directories, but ignore files inside.
+  --ignore-subdirs  ignore sub-directories, only track toplevel files.
+  --ignore-most     ignore all files except for some well-known files.
+  --stat            show stat status information.
+  -z                use NUL as line separator instead of newline.
+
+`git fso init` initializes a file system observer shadow git repo in the
+current directory, which must be empty.  It runs `git init` and configures the
+repo to observe `<realdir>`.
+
+`git fso reinit` changes the subdir tracking strategy as indicated by
+`--x-subdirs` and runs `apply-stub` if necessary.  Warning: It overwrites
+manual changes to `.gitignore`, `.gitattributes`, and `.nogbundles`.
+
+Shadow repo branches:
+
+* `master-stub`: Repo configuration; currently only `.gitignore`.
+* `master-stat`: Realfile stat summary.
+* `master-sha`: Realfile sha summary.
+* `master-content`: Content for select realfiles.
+* `master-archive`: Alternative branch with archive placeholder.
+* `master-sot`: Struct of trees `stat/`, `sha/`, ...
+* `master-tos`: Tree of structs `x.dat.__stat`, `x.dat.__sha`, ...
+
+`git fso stat` records the stat information for `<realdir>` and commits if
+there are changes.
+
+`git fso sha` records secure hashes for `<realdir>` and commits if there are
+changes.
+
+Using `--refresh-index` may be useful if you manually tweaked the Git index
+files, e.g. by running `git read-tree`.  Otherwise, the index may be outdated,
+and Git may needlessly recompute SHAs during each `git-fso sha` to double check
+that there are no changes.
+
+`git fso content` adds the content of selected `<realdir>` files and commits if
+there are changes.  Currently, only the toplevel `README.md` is tracked.
+
+`git fso archive` adds the content of `<realdir>` and commits it to branch
+`master-archive`.  It requires that `master-stat` and the realdir are both
+immutable.  It should only be used when `<realdir>` has been replaced by a
+placeholder that indicates that the original files have been archived.
+
+`git fso sot` updates the struct of trees branch if the stat or sha branch have
+changes.  This is a history-only operation, which does not look at the
+`<realdir>`.
+
+`git fso tos` updates the tree of structs branch if the stat or sha branch have
+changes.  This is a history-only operation, which does not look at the
+`<realdir>`.
+
+`git fso apply-stub` applies changes from `master-stub` to the stat and sha
+branches.  Its primary purpose is to propagate `.gitignore` from `master-stub`.
+
+`git status --stat` prints the stat status similar to `git status --porcelain`,
+but with a simpler format:
+
+* `? foo.dat` new;
+* `M foo.dat` modified;
+* `D foo.dat` deleted.
+
+* `? .` mtime of toplevel directory not yet tracked;
+* `M .` mtime of toplevel directory modified;
+* `D .` toplevel directory deleted.
+
+Special characters in path are never escaped.  Only the `-z` NUL-terminated
+variant is safe for scripting.
+
+EOF
+    exit 1
+}
+
+TMP_EMPTY_DIR=
+
+realdirExists() {
+    [ -z "${TMP_EMPTY_DIR}" ]
+}
+
+realdirIsMissing() {
+    [ -n "${TMP_EMPTY_DIR}" ]
+}
+
+main() {
+    setupOs
+    argparse "$@"
+    cmd_${arg_cmd}
+}
+
+argparse() {
+    arg_cmd=
+    arg_realdir=
+
+    if [ $# -lt 1 ]; then
+        usage
+    fi
+
+    arg_cmd="$1"
+    shift
+    case ${arg_cmd} in
+    -h|--help)
+        usage
+        ;;
+    --version)
+        version
+        ;;
+    init|reinit|status|stat|sha|content|archive|sot|tos|apply-stub)
+        ;;
+    *)
+        die 'invalid subcommand.'
+        ;;
+    esac
+
+    argparse_${arg_cmd} "$@"
+}
+
+argparse_init() {
+    arg_subdir_tracking=enter-subdirs
+    local nSubdirTracking=0
+    while [ $# -gt 0 ]; do
+        case $1 in
+        --ignore-subdirs)
+            arg_subdir_tracking=ignore-subdirs
+            shift
+            let ++nSubdirTracking
+            ;;
+        --ignore-most)
+            arg_subdir_tracking=ignore-most
+            shift
+            let ++nSubdirTracking
+            ;;
+        --bundle-subdirs)
+            arg_subdir_tracking=bundle-subdirs
+            shift
+            let ++nSubdirTracking
+            ;;
+        --observe)
+            if [ $# -lt 2 ]; then
+                die 'missing <realdir>.'
+            fi
+            arg_realdir="$2"
+            shift 2
+            ;;
+        -*)
+            die 'invalid option.'
+            ;;
+        *)
+            die 'too many args.'
+            ;;
+        esac
+    done
+
+    if [ ${nSubdirTracking} -gt 1 ]; then
+        die 'require at most one --x-subdirs option.'
+    fi
+
+    if [ -z "${arg_realdir}" ]; then
+        die 'missing --observe <realdir>.'
+    fi
+}
+
+argparse_status() {
+    opt_z=
+    opt_stat=
+    while [ $# -gt 0 ]; do
+        case $1 in
+        -z)
+            opt_z=t
+            shift
+            ;;
+        --stat)
+            opt_stat=t
+            shift
+            ;;
+        -*)
+            die 'invalid option.'
+            ;;
+        *)
+            die 'too many args.'
+            ;;
+        esac
+    done
+
+    if ! test ${opt_stat}; then
+        die 'missing --stat'
+    fi
+}
+
+argparse_reinit() {
+    arg_subdir_tracking=
+    local nSubdirTracking=0
+    while [ $# -gt 0 ]; do
+        case $1 in
+        --enter-subdirs)
+            arg_subdir_tracking=enter-subdirs
+            shift
+            let ++nSubdirTracking
+            ;;
+        --ignore-subdirs)
+            arg_subdir_tracking=ignore-subdirs
+            shift
+            let ++nSubdirTracking
+            ;;
+        --ignore-most)
+            arg_subdir_tracking=ignore-most
+            shift
+            let ++nSubdirTracking
+            ;;
+        --bundle-subdirs)
+            arg_subdir_tracking=bundle-subdirs
+            shift
+            let ++nSubdirTracking
+            ;;
+        -*)
+            die 'invalid option.'
+            ;;
+        *)
+            die 'too many args.'
+            ;;
+        esac
+    done
+
+    if [ ${nSubdirTracking} -ne 1 ]; then
+        die 'require exactly one --x-subdirs option.'
+    fi
+}
+
+argparse_stat() {
+    opt_refresh_index=
+    opt_mtime_range=
+    opt_mtime_range_only=
+    while [ $# -gt 0 ]; do
+        case $1 in
+        --refresh-index)
+            opt_refresh_index=t
+            shift
+            ;;
+        --mtime-range)
+            opt_mtime_range=t
+            shift
+            ;;
+        --mtime-range-only)
+            opt_mtime_range_only=t
+            shift
+            ;;
+        -*)
+            die 'invalid option.'
+            ;;
+        *)
+            die 'too many args.'
+            ;;
+        esac
+    done
+    if test ${opt_mtime_range} && test ${opt_mtime_range_only}; then
+        die '--mtime-range and --mtime-range-only are mutually exclusive.'
+    fi
+}
+
+argparse_sha() {
+    opt_refresh_index=
+    while [ $# -gt 0 ]; do
+        case $1 in
+        --refresh-index)
+            opt_refresh_index=t
+            shift
+            ;;
+        -*)
+            die 'invalid option.'
+            ;;
+        *)
+            die 'too many args.'
+            ;;
+        esac
+    done
+}
+
+argparse_content() {
+    if [ $# != 0 ]; then
+        die 'too many args.'
+    fi
+}
+
+argparse_archive() {
+    opt_refresh_index=
+    while [ $# -gt 0 ]; do
+        case $1 in
+        --refresh-index)
+            opt_refresh_index=t
+            shift
+            ;;
+        -*)
+            die 'invalid option.'
+            ;;
+        *)
+            die 'too many args.'
+            ;;
+        esac
+    done
+}
+
+argparse_sot() {
+    if [ $# != 0 ]; then
+        die 'too many args.'
+    fi
+}
+
+argparse_tos() {
+    if [ $# != 0 ]; then
+        die 'too many args.'
+    fi
+}
+
+argparse_apply-stub() {
+    if [ $# != 0 ]; then
+        die 'too many args.'
+    fi
+}
+
+cmd_init() {
+    if ! [ -d "${arg_realdir}" ]; then
+        die "realdir \`${arg_realdir}\` is not a directory."
+    fi
+
+    if [ -n "$(ls -A)" ]; then
+        die "current directory is not empty."
+    fi
+
+    git init
+    gitdir="$(git rev-parse --git-dir)"
+
+    git config fso.realdir "${arg_realdir}"
+
+    # Ignore file mode and related changes.
+    git config core.filemode false
+    git config core.trustctime false
+
+    mkdir -p "${gitdir}/fso/bin"
+    (
+        cd "${gitdir}/fso/bin" \
+        && genprgStatClean >'stat-clean' \
+        && genprgStatSmudge >'stat-smudge' \
+        && genprgShaClean >'sha-clean' \
+        && genprgShaSmudge >'sha-smudge' \
+        && chmod 0755 'stat-clean' 'stat-smudge' 'sha-clean' 'sha-smudge'
+    )
+
+    git config filter.stat.clean \
+        '"$(git rev-parse --git-dir)/fso/bin/stat-clean" %f'
+    git config filter.stat.smudge \
+        '"$(git rev-parse --git-dir)/fso/bin/stat-smudge"'
+    git config filter.stat.required true
+
+    git config filter.sha.clean \
+        '"$(git rev-parse --git-dir)/fso/bin/sha-clean" %f'
+    git config filter.sha.smudge \
+        '"$(git rev-parse --git-dir)/fso/bin/sha-smudge"'
+    git config filter.sha.required true
+
+    case ${arg_subdir_tracking} in
+    enter-subdirs)
+        touch '.gitignore'
+        git add '.gitignore'
+        ;;
+    ignore-subdirs)
+        echo '/*/' >'.gitignore'
+        git add '.gitignore'
+        ;;
+    bundle-subdirs)
+        echo '/*/' >'.gitignore'
+        echo '/*/ nogbundle' >'.gitattributes'
+        echo '/*/' >'.nogbundles'
+        git add '.gitignore' '.gitattributes' '.nogbundles'
+        ;;
+    ignore-most)
+        gitignoreMost >'.gitignore'
+        git add '.gitignore'
+        ;;
+    *)
+        die 'logic error: invalid arg_subdir_tracking.'
+        ;;
+    esac
+    git commit -m "init $(date -Iseconds)"
+    git branch -m master-stub
+
+    git branch master-stat master-stub
+    GIT_INDEX_FILE='.git/index-stat' git read-tree master-stat
+
+    git branch master-sha master-stub
+    GIT_INDEX_FILE='.git/index-sha' git read-tree master-sha
+
+    git branch master-content master-stub
+    GIT_INDEX_FILE='.git/index-content' git read-tree master-content
+
+    git branch master-sot master-stub
+    git branch master-tos master-stub
+}
+
+cmd_reinit() {
+    envStub
+
+    # Use empty `.git*` and `.nog*` files to avoid merge conflicts during
+    # `cmd_apply-stub`.
+    case ${arg_subdir_tracking} in
+    enter-subdirs)
+        : >'.gitignore'
+        : >'.gitattributes'
+        : >'.nogbundles'
+        msg='switch to enter-subdirs'
+        ;;
+    ignore-subdirs)
+        echo '/*/' >'.gitignore'
+        : >'.gitattributes'
+        : >'.nogbundles'
+        msg='switch to ignore-subdirs'
+        ;;
+    bundle-subdirs)
+        echo '/*/' >'.gitignore'
+        echo '/*/ nogbundle' >'.gitattributes'
+        echo '/*/' >'.nogbundles'
+        msg='switch to bundle-subdirs'
+        ;;
+    ignore-most)
+        gitignoreMost >'.gitignore'
+        : >'.gitattributes'
+        : >'.nogbundles'
+        msg='switch to ignore-most'
+        ;;
+    *)
+        die 'logic error: invalid arg_subdir_tracking.'
+        ;;
+    esac
+    git add -- '.gitignore' '.gitattributes' '.nogbundles'
+
+    if git diff --cached --quiet; then
+        echo 'Already up-to-date.'
+        exit 0
+    fi
+
+    git commit -m "${msg}"
+    cmd_apply-stub
+
+    # Explicitly clean the current trees.  Git won't remove ignored files that
+    # are already tracked.
+    #
+    # XXX `ignore-subdirs` should perhaps be handled in a similar way as
+    # `updateTreeIgnoreMost()`.
+    case ${arg_subdir_tracking} in
+    ignore-most)
+        for filter in stat sha content; do
+            updateTreeIgnoreMost "${filter}" "${msg}"
+        done
+        ;;
+    esac
+}
+
+# When changing `gitignoreMost()` also update the `grep` in
+# `updateTreeIgnoreMost()`.
+gitignoreMost() {
+        cat <<\EOF
+*
+!.gitignore
+!.gitattributes
+!.nogbundles
+!README.md
+!README.txt
+EOF
+}
+
+updateTreeIgnoreMost() {
+    local filter="$1"
+    local msg="$2"
+
+    local gitdir oldCommit oldTree newTree newCommit
+
+    gitdir="$(git rev-parse --git-dir)"
+    oldCommit="$(git rev-parse -q --verify "master-${filter}")"
+    oldTree="$(git rev-parse "${oldCommit}^{tree}")"
+    newTree=$(
+        export GIT_INDEX_FILE="${gitdir}/index-${filter}"
+
+        git ls-tree -z -r --name-only "${oldTree}" \
+        | (
+            grep -z -v \
+                -e '^\.nogtree$' \
+                -e '^\.gitattributes$' \
+                -e '^\.nogbundles$' \
+                -e '^\.gitignore$' \
+                -e '^README\.md$' \
+                -e '^README\.txt$' \
+            || true
+        ) \
+        | while read -r -d '' path; do
+            printf '0 0000000000000000000000000000000000000000\t%s\0' "${path}"
+        done \
+        | git update-index -z --index-info
+
+        git write-tree
+    )
+
+    if [ "${newTree}" = "${oldTree}" ]; then
+        return 0
+    fi
+
+    newCommit=$(git commit-tree -m "${msg}" -p "${oldCommit}" "${newTree}")
+    git update-ref \
+        -m "${msg}" "refs/heads/master-${filter}" "${newCommit}" "${oldCommit}"
+    echo "master-${filter}: ${msg}: ${newCommit}"
+}
+
+genprgStatClean() {
+    sed -e "s/@@STAT@@/${statProgram}/" <<\EOF
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+printf 'name: ' && jq -n --arg s "$(basename "$1")" '$s'
+@@STAT@@ --printf 'size: %s\nmtime: %Y\n' "$1"
+EOF
+}
+
+genprgStatSmudge() {
+    cat <<\EOF
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+cat
+EOF
+}
+
+genprgShaClean() {
+    sed -e "s/@@STAT@@/${statProgram}/" \
+        -e "s/@@SHA1SUM@@/${sha1sumProgram}/" \
+        -e "s/@@SHA256SUM@@/${sha256sumProgram}/" \
+        <<\EOF
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+printf 'name: ' && jq -n --arg s "$(basename "$1")" '$s'
+@@STAT@@ --printf 'size: %s\n' "$1"
+printf 'sha1: "%s"\n' $(@@SHA1SUM@@ "$1" | cut -d ' ' -f 1)
+printf 'sha256: "%s"\n' $(@@SHA256SUM@@ "$1" | cut -d ' ' -f 1)
+EOF
+}
+
+genprgShaSmudge() {
+    cat <<\EOF
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+cat
+EOF
+}
+
+cmd_status() {
+    trap 'envStub; removeEmptyTmpDir' EXIT
+    envShadowFilter stat
+
+    # Special case for toplevel directory.
+    if old="$(git show 2>/dev/null "HEAD:.nogtree" | grep '^mtime:')"; then
+        if realdirIsMissing; then
+            # `HEAD:.nogtree` exists, but realdir not: deleted.
+            if test ${opt_z}; then
+                printf 'D .\0'
+            else
+                printf 'D .\n'
+            fi
+        else
+            mtime="$(stat --printf 'mtime: %Y' "${GIT_WORK_TREE}")"
+            if [ "${mtime}" != "${old}" ]; then
+                if test ${opt_z}; then
+                    printf 'M .\0'
+                else
+                    printf 'M .\n'
+                fi
+            fi
+        fi
+    elif realdirExists; then
+        # `HEAD:.nogtree` does not exists, but realdir does: unknown.
+        if test ${opt_z}; then
+            printf '? .\0'
+        else
+            printf '? .\n'
+        fi
+    fi
+
+    # `bundlesSet` is the set of existing bundles.  The read loop removes paths
+    # that have been processed.
+    declare -A bundlesSet=()
+    while read -r -d '' path; do
+        bundlesSet["${path}"]=t
+    done < <(lsNogBundles0)
+
+    isBundlePath() {
+        local path="$1"
+        [ ${bundlesSet["${path}"]+_} ]
+    }
+
+    isSubmoduleStatus() {
+        local sub="$1"
+        case ${sub} in
+        S*) return 0 ;;
+        *) return 1 ;;
+        esac
+    }
+
+    # See `git status --help` "Porcelain Format Version 2".
+    while read -r -d '' kind rest; do
+        case $kind in
+        '#')
+            continue
+            ;;
+        1)
+            read -r xy sub mH mI mW hH hI path <<<"${rest}"
+            ;;
+        '?')
+            xy='??'
+            sub='....'
+            path="${rest}"
+            ;;
+        *)
+            die 'invalid `git status --porcelain=v2` line.'
+            ;;
+        esac
+
+        case "${path}" in
+            .git* | .nog* | */.git* | */.nog* )
+                continue
+                ;;
+        esac
+
+        if isBundlePath "${path}"; then
+            unset bundlesSet["${path}"]
+            if ! old="$(git show 2>/dev/null "HEAD:${path}" | grep '^mtime:')"; then
+                xy='??'
+            else
+                new="$(stat --printf 'mtime: %Y' "${GIT_WORK_TREE}/${path}")"
+                if [ "${old}" = "${new}" ]; then
+                    continue
+                fi
+                xy='.M'
+            fi
+        elif isSubmoduleStatus "${sub}"; then
+            if ! sha=$(
+                unset GIT_DIR &&
+                git -C "${GIT_WORK_TREE}/${path}" rev-parse HEAD
+            ); then
+                xy='.M'
+            else
+                if isSubmoduleStatUpToDate "${sha}" "${path}"; then
+                    continue
+                fi
+                xy='.M'
+            fi
+        fi
+
+        # Report changed type as modified.
+        y="${xy:1:1}"
+        y="${y/T/M}"
+
+        if test ${opt_z}; then
+            printf '%s %s\0' "${y}" "${path}"
+        else
+            printf '%s %s\n' "${y}" "${path}"
+        fi
+    done < <(
+        git -c diff.renames=false \
+            status --untracked-files=all -z --porcelain=v2
+    )
+
+    # If there are bundle paths left, print them as new.
+    if [ "${#bundlesSet[@]}" -gt 0 ]; then
+        if test ${opt_z}; then
+            printf '? %s\0' "${!bundlesSet[@]}"
+        else
+            printf '? %s\n' "${!bundlesSet[@]}"
+        fi
+    fi
+}
+
+cmd_stat() {
+    if statIsImmutable; then
+        echo 'immutable'
+        exit 0
+    fi
+
+    trap 'envStub; removeEmptyTmpDir' EXIT
+    envShadowFilter stat
+
+    if test ${opt_refresh_index}; then
+        git update-index -q --refresh
+    fi
+
+    if test ${opt_mtime_range_only}; then
+        updateToplevelStat --force
+    else
+        gitAddReal
+        addStatForDirsWithModifiedChildren
+        # Update nogbundles before submodules to track all bundle directories
+        # in the same way without submodule commit.
+        updateNogBundlesStat
+        convertSubmodulesToStat
+        # Always check toplevel, so that touch toplevel will trigger stat
+        # commit.  Force checking mtime range if requested.  Otherwise details
+        # will only be checked if the toplevel mtime changed
+        if test ${opt_mtime_range}; then
+            updateToplevelStat --force
+        else
+            updateToplevelStat
+        fi
+    fi
+
+    if [ -z "$(git diff --cached --name-only)" ]; then
+        echo 'no changes'
+        exit 0
+    fi
+
+    if test ${opt_mtime_range_only}; then
+        git commit --quiet -m "stat $(date -Iseconds): mtime range"
+    else
+        git commit --quiet -m "stat $(date -Iseconds)"
+    fi
+}
+
+cmd_sha() {
+    shaInClone "$@"
+}
+
+# `shaInPlace()` changes the state of the main repo.  `git fso sha` must not be
+# executed concurrently with `git fso stat` or `git fso content`.
+shaInPlace() {
+    trap 'envStub; removeEmptyTmpDir' EXIT
+    envShadowFilter sha
+
+    if test ${opt_refresh_index}; then
+        git update-index -q --refresh
+    fi
+
+    gitAddReal
+    addShaForDirsWithModifiedChildren
+    updateNogBundlesSha
+    convertSubmodulesToSha
+
+    if [ -z "$(git diff --cached --name-only)" ]; then
+        echo 'no changes'
+        exit 0
+    fi
+
+    git commit --quiet -m "sha $(date -Iseconds)"
+}
+
+# `shaInClone()` avoids most changes to the main repo.  `git fso sha` can be
+# executed concurrently with `git fso stat` or `git fso content`.
+shaInClone() {
+    trap removeEmptyTmpDir EXIT
+    local realdir
+    if ! realdir="$(git config fso.realdir)"; then
+        die 'failed to read config `fso.realdir`.'
+    fi
+
+    # A missing realdir is handled as a temporary empty directory to keep Git
+    # happy.  Some places, like `updateToplevelStat`, use `realdirExists` and
+    # `realdirIsMissing` to handle a missing realdir as a special case.
+    #
+    # The temporary dir is removed by `trap removeEmptyTmpDir`.
+    if ! [ -d "${realdir}" ]; then
+        TMP_EMPTY_DIR="$(makeEmptyTmpDir)"
+        realdir="${TMP_EMPTY_DIR}"
+    fi
+
+    local gitdir
+    if ! gitdir="$(git rev-parse --git-dir)"; then
+        die 'failed to determine git dir.'
+    fi
+
+    clone="${gitdir}/fso/sha.git"
+    if ! [ -e "${clone}" ]; then
+        mkdir "${clone}"
+        # Force object sharing with main repo.  `git init` below preserves the
+        # symlink.
+        ln -s ../../objects "${clone}/objects"
+    fi
+    echo "sha in subdir clone \`${clone}\`"
+
+    # Resolve realpaths and perform the actual work in the subdirectory.
+    realdir="$(realpath "${realdir}")"
+    gitdir="$(realpath "${gitdir}")"
+    cd "${clone}"
+
+    git init --bare
+    # Ignore file mode and related changes.
+    git config core.filemode false
+    git config core.trustctime false
+    echo "ref: refs/heads/master-sha" >"HEAD"
+    git config filter.sha.clean "\"${gitdir}/fso/bin/sha-clean\" %f"
+    git config filter.sha.smudge "\"${gitdir}/fso/bin/sha-smudge\""
+    git config filter.sha.required true
+
+    git fetch --force ../../.. refs/heads/master-sha:refs/heads/master-sha
+
+    mkdir -p 'info'
+    git show HEAD:.gitignore >'info/exclude'
+    cat >'info/attributes' <<EOF
+* filter=sha -text
+.git* -filter text
+.nog* -filter text
+EOF
+
+    export GIT_DIR="$(realpath .)"
+    export GIT_WORK_TREE="${realdir}"
+    export GIT_INDEX_FILE="${gitdir}/index-sha"
+
+    if test ${opt_refresh_index}; then
+        git update-index -q --refresh
+    fi
+
+    gitAddReal
+    addShaForDirsWithModifiedChildren
+    # Update nogbundles before submodules to track all directories in the same
+    # way without submodule commit.
+    updateNogBundlesSha
+    convertSubmodulesToSha
+
+    if [ -z "$(git diff --cached --name-only)" ]; then
+        echo 'no changes'
+        exit 0
+    fi
+
+    git commit --quiet -m "sha $(date -Iseconds)"
+    git push ../../..  refs/heads/master-sha:refs/heads/master-sha
+}
+
+cmd_content() {
+    # Automatically create the branch for compatibility with old fso repos.
+    # This should be dropped when all old repos have been migrated.
+    if ! branchExists master-content; then
+        git branch master-content master-stub
+        GIT_INDEX_FILE='.git/index-content' git read-tree master-content
+    fi
+
+    trap 'envStub; removeEmptyTmpDir' EXIT
+    envShadowFilter content
+
+    # We want to be able to manage content for paths that would otherwise be
+    # ignored, at least until there is a mechanism to configure the content
+    # exclude list that is managed in `envShadowFilter()/fmtExclude()`.
+    #
+    # To achieve that, always populate the index from the branch
+    # `master-content` before inspecting the realdir.  We can use that to add
+    # content that would otherwise be ignored in the following way: place the
+    # content in the realdir, clone the repo, add the content in the clone, and
+    # push `master-content` back to the shadow.  `git-fso content` from then on
+    # tracks the content although it is on the exclude list.
+    #
+    # Run `update-index` to ensure that index information is up to date with
+    # the files in the realdir.  See "Using --refresh" in `git update-index
+    # --help`.
+    git read-tree master-content
+    git update-index -q --refresh
+
+    gitAddReal
+
+    if [ -z "$(git diff --cached --name-only)" ]; then
+        echo 'no changes'
+        exit 0
+    fi
+
+    git commit -m "content $(date -Iseconds)"
+}
+
+cmd_archive() {
+    if ! statIsImmutable; then
+        die 'not immutable'
+    fi
+
+    # Automatically create the branch for compatibility with old fso repos.
+    # This should be dropped when all old repos have been migrated.
+    if ! branchExists master-archive; then
+        git branch master-archive master-stub
+        GIT_INDEX_FILE='.git/index-archive' git read-tree master-archive
+    fi
+
+    trap 'envStub; removeEmptyTmpDir' EXIT
+    envShadowFilter archive
+
+    if test ${opt_refresh_index}; then
+        git update-index -q --refresh
+    fi
+
+    gitAddReal
+
+    if [ -z "$(git diff --cached --name-only)" ]; then
+        echo 'no changes'
+        exit 0
+    fi
+
+    git commit -m "archive $(date -Iseconds)"
+}
+
+# Use the submodule path to store the stat info.  Do not store it as
+# `<submodule>/.nogtree`, because it could confuse gitAddReal().  Git seems to
+# traverse under some conditions into the submodule and list paths in the
+# submodule.  It seems to get somehow confused by an ordinary path in the index
+# that points inside the submodule.  Maybe we could use this behavior in the
+# future to force Git to track the actual submodule content.  But we would
+# probably rely on undefined behavior.  For now, we track submodules as special
+# stat blobs.
+convertSubmodulesToStat() {
+    git ls-files -z -s \
+    | ( grep -z '^160000' || true ) \
+    | while read -r -d '' mode sha stage path; do
+        if isSubmoduleStatUpToDate "${sha}" "${path}"; then
+            # Re-insert into index, because gitAddReal has modified it.
+            git ls-tree -z HEAD -- "${path}"
+            continue
+        fi
+        blob=$(writeBlobSubmoduleStat "${sha}" "${path}")
+        printf "100644 %s\t%s\0" "${blob}" "${path}"
+        printf >&2 'info: recorded submodule stat blob: %s %s\n' "${blob}" "${path}"
+    done \
+    | git update-index -z --index-info
+}
+
+isSubmoduleStatUpToDate() {
+    local sha="$1"
+    local path="$2"
+    git show 2>/dev/null "HEAD:${path}" | grep -q "^submodule: \"${sha}\""
+}
+
+writeBlobSubmoduleStat() {
+    sha="$1"
+    path="$2"
+    name="$(basename "${path}")"
+    (
+        cd "${GIT_WORK_TREE}" \
+        && printf 'name: ' && jq -n --arg s "${name}" '$s' \
+        && treeStat "${path}" \
+        && printf 'submodule: "%s"\n' "${sha}"
+    ) \
+    | git hash-object -t blob -w --stdin
+}
+
+convertSubmodulesToSha() {
+    git ls-files -z -s \
+    | ( grep -z '^160000' || true ) \
+    | while read -r -d '' mode sha stage path; do
+        if isSubmoduleShaUpToDate "${sha}" "${path}"; then
+            # Re-insert into index, because gitAddReal has modified it.
+            git ls-tree -z HEAD -- "${path}"
+            continue
+        fi
+        blob=$(writeBlobSubmoduleSha "${sha}" "${path}")
+        printf "100644 %s\t%s\0" "${blob}" "${path}"
+        printf >&2 'info: recorded submodule sha blob: %s %s\n' "${blob}" "${path}"
+    done \
+    | git update-index -z --index-info
+}
+
+isSubmoduleShaUpToDate() {
+    local sha="$1"
+    local path="$2"
+    git show 2>/dev/null "HEAD:${path}" | grep -q "^submodule: \"${sha}\""
+}
+
+writeBlobSubmoduleSha() {
+    sha="$1"
+    path="$2"
+    name="$(basename "${path}")"
+    (
+        cd "${GIT_WORK_TREE}" \
+        && printf 'name: ' && jq -n --arg s "${name}" '$s' \
+        && printf 'submodule: "%s"\n' "${sha}"
+    ) \
+    | git hash-object -t blob -w --stdin
+}
+
+updateNogBundlesStat() {
+    lsNogBundles0 \
+    | while read -r -d '' path; do
+        if isNogBundleStatUpToDate "${path}"; then
+            # Re-insert into index, because gitAddReal has removed it.
+            git ls-tree -z HEAD -- "${path}"
+            continue
+        fi
+        blob=$(writeBlobNogBundleStat "${path}")
+        printf "100644 %s\t%s\0" "${blob}" "${path}"
+        printf >&2 'info: recorded nogbundle stat blob: %s %s\n' "${blob}" "${path}"
+    done \
+    | git update-index -z --index-info
+}
+
+isNogBundleStatUpToDate() {
+    local path="$1"
+    local old new
+    if ! old="$(git show 2>/dev/null "HEAD:${path}" | grep '^mtime:')"; then
+        return 1
+    fi
+    new="$(stat --printf 'mtime: %Y' "${GIT_WORK_TREE}/${path}")"
+    [ "${old}" = "${new}" ]
+}
+
+writeBlobNogBundleStat() {
+    local path="$1"
+    name="$(basename "${path}")"
+    (
+        cd "${GIT_WORK_TREE}" \
+        && printf 'name: ' && jq -n --arg s "${name}" '$s' \
+        && treeStat "${path}"
+    ) \
+    | git hash-object -t blob -w --stdin
+}
+
+# Nogbundle sha placholders currently only contain the name.  See
+# `addShaForDirsWithModifiedChildren()`.
+updateNogBundlesSha() {
+    lsNogBundles0 \
+    | while read -r -d '' path; do
+        if isNogBundleShaUpToDate "${path}"; then
+            # Re-insert into index, because gitAddReal has removed it.
+            git ls-tree -z HEAD -- "${path}"
+            continue
+        fi
+        blob=$(writeBlobNogBundleSha "${path}")
+        printf '100644 %s\t%s\0' "${blob}" "${path}"
+        printf >&2 'info: recorded nogbundle sha blob: %s %s\n' "${blob}" "${path}"
+    done \
+    | git update-index -z --index-info
+}
+
+# We could check if there is an old blob.  It would probably be up to date,
+# assuming the blob contains only the name, which is immutable.
+#
+# But the heurisitc could fail after switching subdir tracking.  If the
+# submodule commit has been recorded before and the switch is to
+# `bundle-subdirs`, the submodule commit must now be removed.  A simple check
+# on the name would not detect that.
+isNogBundleShaUpToDate() {
+    return 1
+}
+
+writeBlobNogBundleSha() {
+    local path="$1"
+    name="$(basename "${path}")"
+    (
+        cd "${GIT_WORK_TREE}" \
+        && printf 'name: ' && jq -n --arg s "${name}" '$s'
+    ) \
+    | git hash-object -t blob -w --stdin
+}
+
+treeStat() {
+    local path="$1"
+
+    # mtime.
+    stat --printf 'mtime: %Y\n' "${path}"
+
+    # Count types.
+    find "${path}" -printf '%y\n' \
+    | (
+        nDirs=0
+        nFiles=0
+        nLinks=0
+        nOthers=0
+        while read -r ty; do
+            case $ty in
+            d)
+                let ++nDirs
+                ;;
+            f)
+                let ++nFiles
+                ;;
+            l)
+                let ++nLinks
+                ;;
+            *)
+                let ++nOthers
+                ;;
+            esac
+        done
+        printf 'dirs: %d\n' "${nDirs}"
+        printf 'files: %d\n' "${nFiles}"
+        printf 'links: %d\n' "${nLinks}"
+        printf 'others: %d\n' "${nOthers}"
+    )
+
+    # Compute total size of unique regular file inodes.
+    if ! size=$(
+        (
+            find "${path}" -type f -printf '%i %s\n' \
+            | sort -u \
+            | cut -d ' ' -f 2 | tr '\n' '+' \
+            && echo 0
+        ) \
+        | bc
+    ); then
+        die 'Failed to compute total tree size.'
+    fi
+    printf 'size: %d\n' "${size}"
+}
+
+# `statIsImmutable` determines whether update should be skipped: if the
+# immutable attribute is already stored on master-stat and the realdir is
+# missing or immutable.
+statIsImmutable() {
+    if ! (
+        git show master-stat:.nogtree 2>/dev/null | grep -q '^attrs: "i"$'
+    ); then
+        return 1
+    fi
+
+    local realdir
+    if ! realdir="$(git config fso.realdir)"; then
+        die 'failed to read config `fso.realdir`.'
+    fi
+
+    if ! [ -d "${realdir}" ]; then
+        return 0
+    fi
+
+    if [[ "$(lsattrSimple "${realdir}")" =~ i ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
+envShadowFilter() {
+    local filter="$1"
+
+    local realdir
+    if ! realdir="$(git config fso.realdir)"; then
+        die 'failed to read config `fso.realdir`.'
+    fi
+
+    # A missing realdir is handled the same as an empty directory.
+    # The temporary dir is removed by `trap removeEmptyTmpDir`.
+    if ! [ -d "${realdir}" ]; then
+        TMP_EMPTY_DIR="$(makeEmptyTmpDir)"
+        export GIT_WORK_TREE="${TMP_EMPTY_DIR}"
+    else
+        export GIT_WORK_TREE="$(realpath "${realdir}")"
+    fi
+
+    local gitdir
+    if ! gitdir="$(git rev-parse --git-dir)"; then
+        die 'failed to determine git dir.'
+    fi
+
+    case ${filter} in
+    stat|sha)
+        if ! [ -x "${gitdir}/fso/bin/${filter}-clean" ]; then
+            die "\`${gitdir}\` does not look like a git fso shadow repo."
+        fi
+
+        fmtExclude() {
+            git show HEAD:.gitignore
+        }
+
+        fmtAttributes() {
+            cat <<EOF
+* filter=${filter} -text
+.git* -filter text
+.nog* -filter text
+EOF
+        }
+        ;;
+
+    content)
+        # The list of files is hardcoded.  A mechanism to maintain it in Git
+        # might be useful.  Idea: A special file on `master-stub` that lists
+        # files for which to track the content.
+        fmtExclude() {
+            cat <<EOF
+*
+!README.md
+EOF
+        }
+
+        fmtAttributes() {
+            printf ''
+        }
+        ;;
+
+    archive)
+        fmtExclude() {
+            printf ''
+        }
+
+        fmtAttributes() {
+            printf ''
+        }
+        ;;
+
+    *)
+        die "logic error"
+        ;;
+    esac
+
+    echo "ref: refs/heads/master-${filter}" >"${gitdir}/HEAD"
+    if ! (
+        cd "${gitdir}" \
+        && mkdir -p 'info' \
+        && fmtExclude >'info/exclude' \
+        && fmtAttributes >'info/attributes'
+    ); then
+        die 'failed to set up shadow git `info/`.'
+    fi
+
+    export GIT_DIR="$(realpath "${gitdir}")"
+    export GIT_INDEX_FILE="${GIT_DIR}/index-${filter}"
+}
+
+makeEmptyTmpDir() {
+    mktemp -d -t fso-empty-dir-XXXXXXXX
+}
+
+removeEmptyTmpDir() {
+    if [ -n "${TMP_EMPTY_DIR}" ]; then
+        rm -rf "${TMP_EMPTY_DIR}"
+    fi
+}
+
+envStub() {
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
+    local gitdir
+    if ! gitdir="$(git rev-parse --git-dir)"; then
+        die 'failed to determine git dir.'
+    fi
+
+    echo 'ref: refs/heads/master-stub' >"${gitdir}/HEAD"
+    if ! (
+        cd "${gitdir}" \
+        && mkdir -p 'info' \
+        && : >'info/exclude' \
+        && : >'info/attributes'
+    ); then
+        die 'failed to set up shadow git `info/`.'
+    fi
+}
+
+# Git add real files.  Reject shadow files from `git ls-files`, since Git lists
+# them as deleted.  Strip trailing slashes to avoid accidentally traversing
+# into submodules.
+gitAddReal() {
+    git ls-files -z --modified --others --exclude-standard \
+    | ( egrep -z -v '(^|/)\.(git|nog)' || true ) \
+    | sed -z -e 's,/$,,' \
+    | xargs -0 --no-run-if-empty git add ${enabled_no_warn_embedded_repo} --
+}
+
+updateToplevelStat() {
+    local force=
+    while [ $# -gt 0 ]; do
+        case $1 in
+        --force)
+            force=t
+            shift
+            ;;
+        *)
+            die 'logic error'
+            ;;
+        esac
+    done
+
+    local mtime attrs old nogtree head
+    nogtree='.nogtree'
+
+    if ! mtime="$(stat --printf 'mtime: %Y' "${GIT_WORK_TREE}")"; then
+        die 'stat failed.'
+    fi
+
+    if ! attrs="$(lsattrSimple "${GIT_WORK_TREE}")"; then
+        die 'failed to determine realdir attributes.'
+    fi
+
+    if test ${force}; then
+        true  # force -> continue below.
+    elif ! old="$(git show 2>/dev/null "HEAD:${nogtree}" | grep '^mtime:')"; then
+        true  # No mtime recorded -> continue below.
+    elif [ "${mtime}" != "${old}" ]; then
+        true  # mtime changed -> continue below.
+    elif ! old="$(git show 2>/dev/null "HEAD:${nogtree}" | grep '^attrs:')"; then
+        true  # No attrs recorded -> continue below.
+    elif [ "attrs: \"${attrs}\"" != "${old}" ]; then
+        true  # attrs changed -> continue below.
+    else
+        return 0  # up to date.
+    fi
+
+    if realdirIsMissing; then
+        printf '0 0000000000000000000000000000000000000000\t%s\0' "${nogtree}" \
+        | git update-index -z --index-info
+        return 0
+    fi
+
+    if ! minMaxMtime="$(mtimeRange "${GIT_WORK_TREE}")"; then
+        die 'failed to determine mtime range.'
+    fi
+
+    blob=$(
+        (
+            cd "${GIT_WORK_TREE}" \
+            && printf 'name: "root"\n' \
+            && treeStat '.' \
+            && printf '%s\n' "${minMaxMtime}" \
+            && printf 'attrs: "%s"\n' "${attrs}" \
+            && if head=$(gitHead '.'); then
+                printf 'git: "%s"\n' "${head}"
+                # Store nog bundle tree stat for git dir as fields `git_*`.
+                treeStat '.git' | sed -e 's/^/git_/'
+            fi
+        ) \
+        | git hash-object -w --stdin
+    )
+    printf '100644 %s\t%s\0' "${blob}" "${nogtree}" \
+    | git update-index -z --index-info
+}
+
+mtimeRange() {
+    # Ignore permission problems during find.  Find should at least print the
+    # mtime for `.`.  If even that fails, awk reports a fatal error.
+    ( find "$1" -printf '%T@\n' || true ) \
+    | gawk '
+        BEGIN {
+            PREC = "double";
+            min = 999999999999999;
+            max = 0;
+        }
+        {
+            min = (min < $1) ? min : int($1);
+            max = (max > $1) ? max : int($1);
+        }
+        END {
+            if (min == 999999999999999) {
+                print "fatal: missing mtime values." > "/dev/stderr"
+                exit 1
+            }
+            printf("mtime_min: %d\nmtime_max: %d\n", min, max);
+        }
+    '
+}
+
+addStatForDirsWithModifiedChildren() {
+    git diff -z --cached --name-only \
+    | sed -z -e 's,[^/]*$,,' -e 's,/$,,' -e 's,^$,.,' \
+    | sort -z -u \
+    | while read -r -d '' path; do
+        if [ "${path}" = '.' ]; then
+            continue  # Handled by updateToplevelStat().
+        fi
+        name="$(basename "${path}")"
+        nogtree="${path}/.nogtree"
+        head=
+
+        # Tell update-index to delete dirs that are missing, empty, or contain
+        # only special files.  Handle all these situation now in order to avoid
+        # stale `sub/.nogtree` entries after:
+        #
+        # ```
+        # touch sub/.gitignore
+        # touch sub/x.dat
+        # git-fso stat
+        # rm sub/x.dat
+        # git-fso stat
+        # rm -rf sub/
+        # git-fso stat
+        # ```
+        #
+        if isStaleDir "${GIT_WORK_TREE}/${path}"; then
+            printf '0 0000000000000000000000000000000000000000\t%s\0' "${nogtree}"
+            continue
+        fi
+
+        blob=$(
+            (
+                cd "${GIT_WORK_TREE}" \
+                && printf 'name: ' && jq -n --arg s "${name}" '$s' \
+                && stat --printf 'mtime: %Y\n' "${path}" \
+                && if [ -n "${head}" ]; then
+                    printf 'git: "%s"\n' "${head}"
+                    # Store nog bundle tree stat for git dir as fields `git_*`.
+                    treeStat '.git' | sed -e 's/^/git_/'
+                fi
+            ) \
+            | git hash-object -w --stdin
+        )
+        printf '100644 %s\t%s\0' "${blob}" "${nogtree}"
+    done \
+    | git update-index -z --index-info
+}
+
+# A dir is stale if it is missing, empty, or contains only special files.
+isStaleDir() {
+    local dir="${1}"
+
+    if ! [ -e "${dir}" ]; then
+        return 0
+    fi
+
+    if isEmptyDir "${dir}"; then
+        return 0
+    fi
+
+    # If find prints something, the dir contains non-special files and,
+    # therefore, is not stale.
+    if find "${dir}" -mindepth 1 -maxdepth 1 -not -name '.git*' -not -name '.nog*' | read; then
+        return 1
+    fi
+
+    return 0
+}
+
+# Find trick inspired by <https://superuser.com/a/667100>.
+isEmptyDir() {
+    find "${1}" -maxdepth 0 -type d -empty 2>/dev/null | read
+}
+
+# `addShaForDirsWithModifiedChildren()` currently adds only a placeholder that
+# contains the tree name.  It could compute some tree checksum in the future.
+# But it should not contain the mtime, so that `master-sha` only refers to
+# content addresses that are independent of modification time.
+addShaForDirsWithModifiedChildren() {
+    git diff -z --cached --name-only \
+    | sed -z -e 's,[^/]*$,,' -e 's,/$,,' -e 's,^$,.,' \
+    | sort -z -u \
+    | while read -r -d '' path; do
+        if [ "${path}" = '.' ]; then
+            name='root'
+            nogtree=".nogtree"
+            head=$(gitHead "${GIT_WORK_TREE}") || head=
+        else
+            name="$(basename "${path}")"
+            nogtree="${path}/.nogtree"
+            head=
+        fi
+
+        # If the dir does not exist, tell update-index to delete the path.
+        if ! [ -e "${GIT_WORK_TREE}/${path}" ]; then
+            printf '0 0000000000000000000000000000000000000000\t%s\0' "${nogtree}"
+            continue
+        fi
+
+        blob=$(
+            (
+                cd "${GIT_WORK_TREE}" \
+                && printf 'name: ' && jq -n --arg s "${name}" '$s' \
+                && if [ -n "${head}" ]; then
+                    printf 'git: "%s"\n' "${head}"
+                fi
+            ) \
+            | git hash-object -w --stdin
+        )
+        printf '100644 %s\t%s\0' "${blob}" "${nogtree}"
+    done \
+    | git update-index -z --index-info
+}
+
+gitHead() {
+    local dir="$1"
+    if ! [ -e "${dir}/.git" ]; then
+        return 1
+    fi
+    (
+        unset GIT_WORK_TREE
+        unset GIT_DIR
+        unset GIT_INDEX_FILE
+        git -C "${dir}" rev-parse -q --verify HEAD
+    )
+}
+
+cmd_sot() {
+    if ! sot=$(git rev-parse -q --verify master-sot); then
+        die 'failed to rev-parse `master-sot`.'
+    fi
+    if ! stat=$(git rev-parse -q --verify master-stat); then
+        die 'failed to rev-parse `master-stat`.'
+    fi
+    if ! sha=$(git rev-parse -q --verify master-sha); then
+        die 'failed to rev-parse `master-sha`.'
+    fi
+    if ! content=$(git rev-parse -q --verify master-content); then
+        die 'failed to rev-parse `master-content`.'
+    fi
+
+    gitdir="$(git rev-parse --git-dir)"
+
+    if prevStatCommit=$(
+        git show -s --format=%B ${sot} \
+        | egrep '^Stat-commit: [0-9a-f]{40}$' \
+        | head -n 1
+    ); then
+        prevStatCommit="${prevStatCommit#Stat-commit: }"
+    else
+        prevStatCommit=
+    fi
+
+    if prevShaCommit=$(
+        git show -s --format=%B ${sot} \
+        | egrep '^Sha-commit: [0-9a-f]{40}$' \
+        | head -n 1
+    ); then
+        prevShaCommit="${prevShaCommit#Sha-commit: }"
+    else
+        prevShaCommit=
+    fi
+
+    if prevContentCommit=$(
+        git show -s --format=%B ${sot} \
+        | egrep '^Content-commit: [0-9a-f]{40}$' \
+        | head -n 1
+    ); then
+        prevContentCommit="${prevContentCommit#Content-commit: }"
+    else
+        prevContentCommit=
+    fi
+
+    isUpToDate() {
+        [ "${stat}" = "${prevStatCommit}" ] \
+        && [ "${sha}"  = "${prevShaCommit}" ] \
+        && [ "${content}"  = "${prevContentCommit}" ]
+    }
+    if isUpToDate; then
+        echo 'Already up-to-date.'
+        exit
+    fi
+
+    export GIT_INDEX_FILE="${gitdir}/index-sot"
+    git read-tree "${sot}^{tree}"
+
+    git ls-files -z --cached \
+    | ( egrep -z '^(stat|sha|content)/' || true ) \
+    | xargs -0 --no-run-if-empty git update-index --force-remove --
+
+    git read-tree --prefix=stat/ ${stat}^{tree}
+    git read-tree --prefix=sha/ ${sha}^{tree}
+    git read-tree --prefix=content/ ${content}^{tree}
+
+    t=$(git write-tree)
+    msg="sot $(date -Iseconds)
+
+Content-commit: ${content}
+Content-commit-date: $(git show -s --format=%cI ${content})
+Sha-commit: ${sha}
+Sha-commit-date: $(git show -s --format=%cI ${sha})
+Stat-commit: ${stat}
+Stat-commit-date: $(git show -s --format=%cI ${stat})
+"
+    newSot=$(git commit-tree -m "${msg}" -p ${sot} ${t})
+
+    git update-ref -m 'sot' refs/heads/master-sot ${newSot} ${sot}
+    echo "master-sot: ${newSot}"
+}
+
+cmd_tos() {
+    if ! tos=$(git rev-parse -q --verify master-tos); then
+        die 'failed to rev-parse `master-tos`.'
+    fi
+    if ! stat=$(git rev-parse -q --verify master-stat); then
+        die 'failed to rev-parse `master-stat`.'
+    fi
+    if ! sha=$(git rev-parse -q --verify master-sha); then
+        die 'failed to rev-parse `master-sha`.'
+    fi
+    if ! content=$(git rev-parse -q --verify master-content); then
+        die 'failed to rev-parse `master-content`.'
+    fi
+
+    gitdir="$(git rev-parse --git-dir)"
+
+    if prevStatCommit=$(
+        git show -s --format=%B ${tos} \
+        | egrep '^Stat-commit: [0-9a-f]{40}$' \
+        | head -n 1
+    ); then
+        prevStatCommit="${prevStatCommit#Stat-commit: }"
+    else
+        prevStatCommit=
+    fi
+
+    if prevShaCommit=$(
+        git show -s --format=%B ${tos} \
+        | egrep '^Sha-commit: [0-9a-f]{40}$' \
+        | head -n 1
+    ); then
+        prevShaCommit="${prevShaCommit#Sha-commit: }"
+    else
+        prevShaCommit=
+    fi
+
+    if prevContentCommit=$(
+        git show -s --format=%B ${tos} \
+        | egrep '^Content-commit: [0-9a-f]{40}$' \
+        | head -n 1
+    ); then
+        prevContentCommit="${prevContentCommit#Content-commit: }"
+    else
+        prevContentCommit=
+    fi
+
+    isUpToDate() {
+        [ "${stat}" = "${prevStatCommit}" ] \
+        && [ "${sha}"  = "${prevShaCommit}" ] \
+        && [ "${content}"  = "${prevContentCommit}" ]
+    }
+    if isUpToDate; then
+        echo 'Already up-to-date.'
+        exit
+    fi
+
+    export GIT_INDEX_FILE="${gitdir}/index-tos"
+    rm -f "${GIT_INDEX_FILE}"
+
+    git ls-tree -z -r ${stat}^{tree} \
+    | ( grep -z '.gitignore' || true ) \
+    | git update-index -z --index-info
+
+    git ls-tree -z -r ${stat}^{tree} \
+    | ( grep -z -v '.gitignore' || true ) \
+    | sed -z -e "s,$,.__stat," \
+    | git update-index -z --index-info
+
+    git ls-tree -z -r ${sha}^{tree} \
+    | ( grep -z -v '.gitignore' || true ) \
+    | sed -z -e "s,$,.__sha," \
+    | git update-index -z --index-info
+
+    git ls-tree -z -r ${content}^{tree} \
+    | ( grep -z -v '.gitignore' || true ) \
+    | sed -z -e "s,$,.__content," \
+    | git update-index -z --index-info
+
+    t=$(git write-tree)
+    msg="tos $(date -Iseconds)
+
+Content-commit: ${content}
+Content-commit-date: $(git show -s --format=%cI ${content})
+Sha-commit: ${sha}
+Sha-commit-date: $(git show -s --format=%cI ${sha})
+Stat-commit: ${stat}
+Stat-commit-date: $(git show -s --format=%cI ${stat})
+"
+    newSot=$(git commit-tree -m "${msg}" -p ${tos} ${t})
+
+    git update-ref -m 'tos' refs/heads/master-tos ${newSot} ${tos}
+    echo "master-tos: ${newSot}"
+}
+
+cmd_apply-stub() {
+    gitdir="$(git rev-parse --git-dir)"
+
+    if stubHasChangesFor master-stat; then
+        stat=$(git rev-parse -q --verify master-stat)
+        stub=$(git rev-parse -q --verify master-stub)
+        base=$(git merge-base master-stat master-stub)
+        t=$(
+            export GIT_INDEX_FILE="${gitdir}/index-stat" \
+            && git read-tree -i -m ${base} ${stat} ${stub} \
+            && git write-tree
+        )
+        msgStat="Merge stub into stat $(date -Iseconds)"
+        newStat=$(git commit-tree -m "${msgStat}" -p ${stat} -p ${stub} ${t})
+    else
+        newStat=
+        echo 'Branch `master-stat` up-to-date.'
+    fi
+
+    if stubHasChangesFor master-sha; then
+        sha=$(git rev-parse -q --verify master-sha)
+        stub=$(git rev-parse -q --verify master-stub)
+        base=$(git merge-base master-sha master-stub)
+        t=$(
+            export GIT_INDEX_FILE="${gitdir}/index-sha" \
+            && git read-tree -i -m ${base} ${sha} ${stub} \
+            && git write-tree
+        )
+        msgSha="Merge stub into sha $(date -Iseconds)"
+        newSha=$(git commit-tree -m "${msgSha}" -p ${sha} -p ${stub} ${t})
+    else
+        newSha=
+        echo 'Branch `master-sha` up-to-date.'
+    fi
+
+    if stubHasChangesFor master-content; then
+        content=$(git rev-parse -q --verify master-content)
+        stub=$(git rev-parse -q --verify master-stub)
+        base=$(git merge-base master-content master-stub)
+        t=$(
+            export GIT_INDEX_FILE="${gitdir}/index-content" \
+            && git read-tree -i -m ${base} ${content} ${stub} \
+            && git write-tree
+        )
+        msgContent="Merge stub into content $(date -Iseconds)"
+        newContent=$(
+            git commit-tree -m "${msgContent}" -p ${content} -p ${stub} ${t}
+        )
+    else
+        newContent=
+        echo 'Branch `master-content` up-to-date.'
+    fi
+
+    if [ -n "${newStat}" ]; then
+        git update-ref \
+            -m "${msgStat}" refs/heads/master-stat ${newStat} ${stat}
+        echo "master-stat: ${msgStat}: ${newStat}"
+    fi
+    if [ -n "${newSha}" ]; then
+        git update-ref \
+            -m "${msgSha}" refs/heads/master-sha ${newSha} ${sha}
+        echo "master-sha: ${msgSha}: ${newSha}"
+    fi
+    if [ -n "${newContent}" ]; then
+        git update-ref \
+            -m "${msgContent}" refs/heads/master-content \
+            ${newContent} ${content}
+        echo "master-content: ${msgContent}: ${newContent}"
+    fi
+}
+
+stubHasChangesFor() {
+    local them="$1"
+    [ -n "$(git rev-list -n 1 "${them}..master-stub")" ]
+}
+
+branchExists() {
+    git rev-parse -q --verify "refs/heads/$1" >/dev/null 2>&1
+}
+
+die() {
+    echo >&2 "fatal: $*"
+    exit 1
+}
+
+setupOs() {
+    # We should enable --no-warn-embedded-repo when we are sure that all Git
+    # installations that we use support it.
+    enabled_no_warn_embedded_repo=--no-warn-embedded-repo
+    enabled_no_warn_embedded_repo=
+
+    if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
+        die 'require at least Bash 4.'
+    fi
+
+    case $(uname) in
+    Darwin)
+        statProgram='gstat'
+        sha1sumProgram='gsha1sum'
+        sha256sumProgram='gsha256sum'
+        stat() {
+            gstat "$@"
+        }
+        date() {
+            gdate "$@"
+        }
+        grep() {
+            ggrep "$@"
+        }
+        egrep() {
+            gegrep "$@"
+        }
+        xargs() {
+            gxargs "$@"
+        }
+        sed() {
+            gsed "$@"
+        }
+        sort() {
+            gsort "$@"
+        }
+        find() {
+            gfind "$@"
+        }
+        lsattrSimple() {
+            true
+        }
+        ;;
+    Linux)
+        statProgram='stat'
+        sha1sumProgram='sha1sum'
+        sha256sumProgram='sha256sum'
+
+        # `lsattrSimple <path>` prints `i` if the immutable attribute is set
+        # for path.  It prints the empty string if the immutable attribute is
+        # unset or if the filesystem does not support attributes.
+        lsattrSimple() {
+            local path="$1"
+            local attr ec
+            # Capture lsattr's stdout, stderr, and exit code.  Then analyze.
+            attr="$(lsattr -d "${path}" 2>&1)" \
+            && ec=$? || ec=$?; case ${ec} in
+            0)
+                # lsattr ok: strip path to get attr flags, and check if they
+                # contain `i`.
+                attr="${attr%% *}"
+                if [[ ${attr} =~ i ]]; then
+                    printf 'i'
+                fi
+                return 0
+                ;;
+            *)
+                # lsattr failed: analyze error message to determine if
+                # filesystem does not support attributes.  If so, return ok.
+                # Otherwise, echo the error message and return the lsattr exit
+                # code.
+                local rgx='^lsattr: Inappropriate ioctl for device'
+                if [[ ${attr} =~ ${rgx} ]]; then
+                    return 0
+                fi
+                printf >&2 '%s\n' "${attr}"
+                return ${ec}
+                ;;
+            esac
+        }
+
+        ;;
+    *)
+        die "unknown OS."
+        ;;
+    esac
+
+    if ! bc --version | grep -q '^bc '; then
+        die 'missing bc.'
+    fi
+    if ! gawk --version | grep -q '^GNU Awk '; then
+        die 'missing gawk.'
+    fi
+    if ! jq --version | grep -q '^jq-'; then
+        die 'missing jq.'
+    fi
+}
+
+# `lsNogBundles0()` lists paths that qualify as nogbundles without trailing
+# slash, separated by NUL.  Candidate directories are traversed according to
+# the glob-like patterns in `.nogbundles`.  Child directories are only visited
+# if the parent directory is also matched.  Candidate directories are selected
+# if they have a Git attribute `nogbundle`, using the directory path with a
+# trailing slash.
+lsNogBundles0() {
+    if ! git show HEAD:.nogbundles >/dev/null 2>&1; then
+        return
+    fi
+
+    git show HEAD:.nogbundles \
+    | (
+        findArgs=(
+            .
+            -regextype posix-basic
+            -type d -and -not -name '.git' -and '('
+                -regex '^\.$' -true
+        )
+        while read -r pat; do
+            # Skip comments, i.e. lines with # as first character.
+            if [ "${pat:0:1}" = '#' ]; then
+                continue
+            fi
+
+            # Skip empty lines
+            if [ -z "${pat// /}" ]; then
+                continue
+            fi
+
+            # Remove trailing and leading slash.  Find uses paths without
+            # trailing slash.  A leading slash is allowed but meaningless.
+            pat="${pat#/}"
+            pat="${pat%/}"
+
+            # Escape posix-basic regular expression special characters: .[^$.
+            pat="${pat//[/\\[}"
+            pat="${pat//./\\.}"
+            pat="${pat//^/\\^}"
+            pat="${pat//$/\\$}"
+
+            # Convert glob to regex.  Disambiguated * and ** as follows:
+            # Protect double * as double dot.  Double dot is unambiguous,
+            # because all dots have been escaped above.  Then convert single *
+            # to regex, then double dot to regex.  Finally convert ?.
+            pat="${pat//\*\*/..}"
+            pat="${pat//\*/[^/]*}"
+            pat="${pat//../.*}"
+            pat="${pat//\?/.}"
+
+            # Anchor to path with find prefix `./`.
+            pat="^\./${pat}\$"
+
+            # Print paths without leading './' but with trailing slash for git
+            # attribute matching, separated by NUL.
+            findArgs+=(
+                -or -regex "${pat}" -printf '%P/\0'
+            )
+        done
+        findArgs+=(
+            ')'
+            -or -prune
+        )
+        ( cd ${GIT_WORK_TREE} && find "${findArgs[@]}" )
+    ) \
+    | git check-attr --cached --stdin -z nogbundle \
+    | while read -r -d '' path && read -r -d '' attr && read -r -d '' val; do
+        if [ "${val}" = set ]; then
+            # Without trailing slash.
+            printf '%s\0' "${path%/}"
+        fi
+    done
+}
+
+main "$@"

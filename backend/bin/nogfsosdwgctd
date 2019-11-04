@@ -1,0 +1,195 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+semver='0.1.0'
+
+version() {
+    echo "nogfsosdwgctd-${semver}"
+    exit 0
+}
+
+nogfsosdwgctd="$(realpath "${BASH_SOURCE[0]}")"
+
+usage() {
+    cat <<\EOF
+Usage:
+    nogfsosdwgctd [--config <config>]
+    nogfsosdwgctd [--config <config>] process <repojson>
+
+Options:
+    <config>  [default: /etc/nog/nogfsosdwgctdconfig.sh]
+        The config file.
+
+`nogfsosdwgctd` performs regular garbage collection on shadow repos.  The
+details are controlled by `<config>`.
+
+`nogfsosdwgctd` is DEPRECATED, since `git gc` has been integrated as a
+background task in `nogfsostad`,
+
+`nogfsosdwgctd` invokes itself as `nogfsosdwgctd process ...` to process a
+repo.  `<repojson>` is the information that `nogfsoschd` passes to processing
+commands.
+
+EOF
+    exit 1
+}
+
+main() {
+    argparse "$@"
+    readConfig
+    main_${arg_cmd}
+}
+
+argparse() {
+    arg_cmd=server
+    arg_config='/etc/nog/nogfsosdwgctdconfig.sh'
+    while [ $# -gt 0 ]; do
+        case $1 in
+        -h|--help)
+            usage
+            ;;
+        --version)
+            version
+            ;;
+        --config)
+            if [ $# -lt 2 ]; then
+                die '--config requires an argument.'
+            fi
+            arg_config="$2"
+            shift 2
+            ;;
+        process)
+            arg_cmd="$1"
+            shift
+            break
+            ;;
+        *)
+            break
+            ;;
+        esac
+    done
+    argparse_${arg_cmd} "$@"
+}
+
+argparse_server() {
+    if [ $# -ne 0 ]; then
+        die 'unknown argument.'
+    fi
+}
+
+argparse_process() {
+    arg_repojson=
+    while [ $# -gt 0 ]; do
+        case $1 in
+        {*)
+            if [ -n "${arg_repojson}" ]; then
+                die 'unexpected argument.'
+            fi
+            arg_repojson="$1"
+            shift
+            ;;
+        *)
+            die 'unknown argument.'
+            ;;
+        esac
+    done
+    if [ -z "${arg_repojson}" ]; then
+        die 'missing <repojson>.'
+    fi
+}
+
+# Lines <var> <eregex>.
+configVariables='
+cfgShadowHost ^\S+$
+cfgShadowRoot ^/\S+$
+'
+
+configFunctions='
+cfgNogfsoschdShadowGc
+'
+
+readConfig() {
+    if ! [ -f "${arg_config}" ]; then
+        die "Missing config file \`${arg_config}\`."
+    fi
+
+    source "${arg_config}"
+
+    while read -r var ergx; do
+        if [ -z "${ergx}" ]; then
+            continue
+        fi
+        if ! egrep -q -e "${ergx}" <<< "${!var}"; then
+            die "Malformed config variable \`${var}\`."
+        fi
+    done <<< "${configVariables}"
+
+    for fn in ${configFunctions}; do
+        if ! isFunction ${fn}; then
+            die "Missing config function \`${fn}()\`."
+        fi
+    done
+}
+
+main_server() {
+    log 'Started nogfsoschd.'
+    cfgNogfsoschdShadowGc -- \
+        "${nogfsosdwgctd}" --config "${arg_config}" process
+}
+
+main_process() {
+    gcRepo "${arg_repojson}"
+}
+
+matchUuid() {
+    local ergx='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    egrep -q "${ergx}" <<<"${1}"
+}
+
+gcRepo() {
+    local json="$1"
+    local id shadowUrl shadowPath
+
+    id="$(jq -r '.id' <<<"${json}")"
+    if [ "${id}" = 'null' ]; then
+        die 'missing repo id.'
+    fi
+    if ! matchUuid "${id}"; then
+        die 'malformed repo id.'
+    fi
+
+    shadowUrl="$(jq -r '.shadow' <<<"${json}")"
+    if [ "${shadowUrl}" = 'null' ] || [ -z "${shadowUrl}" ]; then
+        log "Ignored repo ${id} without shadow path."
+        return 0
+    fi
+    if ! grep -q "^${cfgShadowHost}:${cfgShadowRoot}/" <<<"${shadowUrl}"; then
+        die "Repo ${id} has invalid shadow path \`${shadowUrl}\`."
+    fi
+    shadowPath="$(cut -d ':' -f 2 <<<"${shadowUrl}")"
+
+    if ! [ -d "${shadowPath}" ]; then
+        log "Missing repo ${id} shadow ${shadowPath}"
+        return 0
+    fi
+
+    log "Started git gc ${id} ${shadowPath}"
+    git -C "${shadowPath}" gc
+    log "Completed git gc ${id} ${shadowPath}"
+}
+
+log() {
+    echo >&2 "$(date -Iseconds -u)" '[nogfsosdwgctd]' "$@"
+}
+
+die() {
+    printf >&2 'fatal: %s\n' "$1"
+    exit 1
+}
+
+isFunction() {
+    declare -f "$1" >/dev/null
+}
+
+main "$@"

@@ -1,0 +1,838 @@
+# See CONTRIBUTING.md for usage.
+#
+# See <https://blog.blindside.io/docker-compose-go-c2bb7bed0bab#.vrx7k611p> for
+# the general idea how to use Docker Compose for a Go dev environment.
+#
+# # Environment variables
+#
+# See `.env`.
+#
+# # Volumes and Containers
+#
+# See comments at individual volumes and containers.
+
+version: '2.1'
+
+volumes:
+  # Volume `dep` contains the dep cache.
+  dep: {}
+
+  # Volume `go` contains the entire `/go` tree to maintain state between
+  # `godev` container runs.  The volume needs to be recreated after changes to
+  # the `godev` image, so that `/go` is re-populated from the image.
+  go: {}
+
+  # Volume `mongo-data` contains the MongoDB data.
+  mongo-data: {}
+  # Volume `mongo-run` contains the MongoDB Unix domain socket.
+  mongo-run: {}
+
+  nogfso-shadow: {}
+  nogfso-tartt: {}
+  nogfso-archive: {}
+  nogfso-tape: {}
+  nogfso-backup: {}
+  nogfso-var: {}
+  exinst-data: {}
+  orgfs: {}
+
+  # Volume `orgfs2` contains a filesystem with `bcpfs-perms` ACLs.
+  orgfs2: {}
+
+  gitlab-etc: {}
+  gitlab-log: {}
+  gitlab-data: {}
+  godev-root-ssh: {}
+
+  # Volume `godev-root-cache` is mounted as `/root/.cache`.  It contains the Go
+  # build cache, which Go uses since 1.10, see
+  # <https://golang.org/doc/go1.10#build>.  The actual cache is a subdir.  Its
+  # path is reported by:
+  #
+  # ```
+  # ddev go env GOCACHE
+  # ```
+  #
+  godev-root-cache: {}
+
+  ssl: {}
+  jwt: {}
+
+  # Volume `npm` contains `~/.meteor` to allow caching of Meteor packages
+  # across builds.  The volume must be recreated after changes to the
+  # `meteordev` image, so that it is re-populated from the image.
+  meteor: {}
+
+  # Volume `npm` contains the NPM cache.
+  npm: {}
+
+  # Volume `nogappd-*` are uses to isolate Meteor builds in the container
+  # `meteordev` from Meteor builds on the host:
+  #
+  #  - `meteor-local` is mounted as `apps/nog-app/.meteor/local`
+  #  - `meteor-node_modules` is mounted as `apps/nog-app/node_modules`
+  #
+  meteor-local: {}
+  meteor-node_modules: {}
+
+  # Volume `hostsocks` contains forwarded socktes.  See details at container
+  # `hostsocks`.
+  hostsocks: {}
+
+services:
+  # Container `podbase` provides a common network namespace, so that other
+  # containers can talk on localhost if needed.
+  podbase:
+    image: gcr.io/google_containers/pause-amd64:3.0
+    hostname: localhost
+    ports:
+      - "127.0.0.1:7540:7540"  # nogechod
+      - "127.0.0.1:7550:7550"  # nogfsoregd
+      - "127.0.0.1:7552:7552"  # nogfsostad
+      - "127.0.0.1:7554:7554"  # nogfsog2nd
+      - "127.0.0.1:10080:9000"  # Minio
+      - "127.0.0.1:10180:80"  # GitLab
+
+  # # S3 emulation
+  #
+  # Container `objs` runs Minio to emulate S3.
+  objs:
+    image: minio/minio:RELEASE.2017-06-13T19-01-01Z@sha256:2bb0ef81fc1ade6c36cc492b0d749318eeffbae345f63ca99387045f50903ed9
+    network_mode: service:podbase
+    command:
+      - server
+      - /export
+    environment:
+      - MINIO_ACCESS_KEY=Cdemo
+      - MINIO_SECRET_KEY=Cdemosecret
+  # Container `objssetup` configures the expected bucket and quits.
+  objssetup:
+    build: ./tools/images/miniosetup
+    image: ${DEV_IMAGE_REGISTRY}miniosetup:${MINIOSETUP_IMAGE_VERSION}
+    network_mode: service:podbase
+    environment:
+      - no_proxy=objs
+
+  # MongoDB for backends.
+  mongo:
+    image: mongo:3.4.8@sha256:100997a571c8d4c478e77b504f82e74ee14ac0d5f172361cfea7c81b7d776f23
+    network_mode: service:podbase
+    volumes:
+      - mongo-data:/data/db
+      - mongo-run:/mongo/run
+    command:
+      - 'bash'
+      - '-c'
+      - |
+        chown mongodb /mongo/run \
+        && chmod 0755 /mongo/run \
+        && exec docker-entrypoint.sh mongod \
+          --unixSocketPrefix /mongo/run \
+          --filePermissions 0777
+
+  # GitLab for testing fso:
+  #
+  # See `backend/HACKING-fso.md` for instructions.
+  #
+  # Release: Git tags <https://gitlab.com/gitlab-org/gitlab-ce/tags>, Docker
+  # image tags <https://hub.docker.com/r/gitlab/gitlab-ce/tags/>.
+  #
+  # General instructions:
+  # <https://docs.gitlab.com/omnibus/docker/README.html#run-the-image>.
+  gitlab:
+    image: gitlab/gitlab-ce:9.5.4-ce.0@sha256:48a8549ef761b0b550422dfe9c9d2371eb5eff08aeaf98419be4aa086d1f280b
+    network_mode: service:podbase
+    volumes:
+      - gitlab-etc:/etc/gitlab
+      - gitlab-log:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+
+  # Either `dc up -d nogfsoregd` or manually `ddev nogfsoregd`; but not both.
+  nogfsoregd:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    read_only: True
+    volumes:
+      - go:/go
+      - mongo-run:/mongo/run
+      - ssl:/nog/ssl
+      - jwt:/nog/jwt
+    working_dir: /
+    command:
+      - nogfsoregd
+      - --log=mu
+      - --advertise-rgrpc=localhost:7551
+      - --proc-registry=exreg
+      - --events-gc-scan-start=1s
+      - --events-gc-scan-every=30s
+      - --events-gc-scan-jitter=3s
+      - --history-trim-scan-start=2s
+      - --history-trim-scan-every=30s
+      - --history-trim-scan-jitter=3s
+      - --workflows-gc-scan-start=3s
+      - --workflows-gc-scan-every=30s
+      - --workflows-gc-scan-jitter=3s
+  # `nogfsostad` runs as root to avoid permission problems during development.
+  #
+  # `nogfsostad-*` illustrates how to run multiple daemons as non-root on a
+  # bcpfs-like filesystem, where the org units are partitioned among the
+  # daemons.  See corresponding Unix user and group setup in:
+  #
+  #  - `./tools/images/godev/build/add-orgfs-groups`
+  #  - `./tools/bin/init-fso-dev`
+  #
+  # Either `dc up -d nogfsostad` or manually `ddev nogfsostad`; but not both.
+  nogfsostad:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - go:/go
+      - .:/go/src/github.com/nogproject/nog
+      - nogfso-shadow:/nogfso/shadow
+      - godev-root-ssh:/root/.ssh
+      - gitlab-etc:/etc/gitlab
+      - ssl:/nog/ssl
+      - jwt:/nog/jwt
+      - exinst-data:/exinst/data
+      - orgfs:/orgfs
+    working_dir: /
+    environment:
+      # `GODEBUG` can be useful, see <https://golang.org/pkg/runtime/>.
+      # - GODEBUG=gctrace=1  # Report GC runs.
+      - GODEBUG=  # Debugging disabled.
+    command:
+      - nogfsostad
+      - --jwt-unix-domain=EXAMPLE
+      - --log=mu
+      - --session-name=localhost
+      - --git-gc-scan-start=1s
+      - --git-gc-scan-every=10s
+      - "--git-committer=nogfsostad <admin@example.com>"
+      - "--stat-author=nogfsostad <admin@example.com>"
+      - --stat-scan-start=5s
+      - --stat-scan-every=20s
+      - --host=files.example.com
+      - --shadow-root=/nogfso/shadow
+      - --shadow-root-alt=/nogfso/legacy-shadow
+      - --shadow-root-alt=/nogfso/legacy-shadow-2
+      - --stdtools-projects-root=/exinst/data/projects
+      - --prefix=/example/files
+      - --prefix=/example/exinst/data
+      - --prefix-init-limit=/example/exinst/data/projects/foo/small-prefix:2:10
+      - --repo-init-limit=/example/exinst/data/projects/foo/small-repo:2:10
+      - --prefix=/example/share
+      - --prefix=/example/orgfs
+      - --prefix=/example/nog
+      - --gitlab-token=/etc/gitlab/root.token
+      - exreg
+
+  nogfsostad-2:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - go:/go
+      - .:/go/src/github.com/nogproject/nog
+      - nogfso-shadow:/nogfso/shadow
+      - nogfso-var:/nogfso/var
+      - ssl:/nog/ssl
+      - jwt:/nog/jwt
+      - orgfs2:/orgfs2:ro
+    working_dir: /
+    environment:
+      # `GODEBUG` can be useful, see <https://golang.org/pkg/runtime/>.
+      # - GODEBUG=gctrace=1  # Report GC runs.
+      - GODEBUG=  # Debugging disabled.
+    command:
+      # Change HOME to avoid permission denied with `HOME=/root`.
+      - env
+      - HOME=/etc/nogfsostad
+      # Use `nogfsostasvsd` to switch the user and add supplementary groups.
+      - nogfsostasvsd
+      - --userspec=ngfsta2
+      - --group-prefix=org_ag-alice
+      - --group-prefix=org_ag-bob
+      - --group-prefix=srv_rem-707
+      - --group-prefix=srv_tem-505
+      - --
+      # Then run `nogfsostad`.
+      - nogfsostad
+      - --jwt-unix-domain=EXAMPLE
+      - --udod-socket-dir=/nogfso/var/run/nogfsostad/udod
+      - --log=mu
+      - --gitlab=no
+      - --session-name=localhost
+      # Disabling background jobs can be useful during development.
+      #
+      # Enabled:
+      #
+      # ```
+      - --git-gc-scan-start=2s
+      - --git-gc-scan-every=20s
+      - --stat-scan-start=7s
+      - --stat-scan-every=20s
+      # ```
+      #
+      # Disabled:
+      #
+      # ```
+      # - --git-gc-scan-start=0
+      # - --git-gc-scan-every=0
+      # - --stat-scan-start=0
+      # - --stat-scan-every=0
+      # ```
+      #
+      - "--git-committer=nogfsostad-2 <admin@example.com>"
+      - "--stat-author=nogfsostad <admin@example.com>"
+      - --host=files.example.com
+      - --trim-host-root=/orgfs2/data
+      - --archive-repo-spool=/orgfs2/archive-repo-spool
+      - --unarchive-repo-spool=/orgfs2/unarchive-repo-spool
+      - --prefix=/example/orgfs2/srv/tem-505/ag-alice
+      - --prefix=/example/orgfs2/srv/tem-505/ag-bob
+      - --prefix=/example/orgfs2/org/ag-alice
+      - exreg
+  nogfsostaudod-path-alice:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - go:/go
+      - .:/go/src/github.com/nogproject/nog
+      - nogfso-var:/nogfso/var
+      - orgfs2:/orgfs2:ro
+    working_dir: /
+    environment:
+      # `GODEBUG` can be useful, see <https://golang.org/pkg/runtime/>.
+      # - GODEBUG=gctrace=1  # Report GC runs.
+      - GODEBUG=  # Debugging disabled.
+    command:
+      - bash
+      - -c
+      - |
+        set -o errexit -o nounset -o pipefail -o noglob
+        set -x
+        install -o root -g root -m a=rwx,o+t -d /nogfso/var/run/nogfsostad/udod
+        exec \
+        chroot --userspec=alice / \
+        env HOME=/home/alice \
+        nogfsostaudod-path \
+          --log=mu \
+          --stad-socket-dir=/nogfso/var/run/nogfsostad/udod \
+          --stad-users=ngfsta2
+
+  nogfsostad-3:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - go:/go
+      - .:/go/src/github.com/nogproject/nog
+      - nogfso-shadow:/nogfso/shadow
+      - nogfso-var:/nogfso/var
+      - ssl:/nog/ssl
+      - jwt:/nog/jwt
+      - orgfs2:/orgfs2
+    working_dir: /
+    environment:
+      # `GODEBUG` can be useful, see <https://golang.org/pkg/runtime/>.
+      # - GODEBUG=gctrace=1  # Report GC runs.
+      - GODEBUG=  # Debugging disabled.
+    command:
+      # Change HOME to avoid permission denied with `HOME=/root`.
+      - env
+      - HOME=/etc/nogfsostad
+      # Use `nogfsostasvsd` to switch the user and add supplementary groups.
+      - nogfsostasvsd
+      - --userspec=ngfsta3
+      - --group-prefix=org_ag-charly
+      - --group-prefix=srv_rem-707
+      - --group-prefix=srv_tem-505
+      - --
+      # Then run `nogfsostad`.
+      - nogfsostad
+      - --jwt-unix-domain=EXAMPLE
+      - --sududod-socket=/nogfso/var/run/nogfsostad/sududod/sock
+      - --log=mu
+      - --gitlab=no
+      - --session-name=localhost
+      - --git-gc-scan-start=3s
+      - --git-gc-scan-every=30s
+      - "--git-committer=nogfsostad-3 <admin@example.com>"
+      - "--stat-author=nogfsostad <admin@example.com>"
+      - --stat-scan-start=9s
+      - --stat-scan-every=20s
+      - --host=files.example.com
+      - --trim-host-root=/orgfs2/data
+      - --archive-repo-spool=/orgfs2/archive-repo-spool
+      - --unarchive-repo-spool=/orgfs2/unarchive-repo-spool
+      - --prefix=/example/orgfs2/srv/tem-505/ag-charly
+      - exreg
+  nogfsostasududod:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - go:/go
+      - .:/go/src/github.com/nogproject/nog
+      - nogfso-var:/nogfso/var
+      - orgfs2:/orgfs2
+    working_dir: /
+    environment:
+      # `GODEBUG` can be useful, see <https://golang.org/pkg/runtime/>.
+      # - GODEBUG=gctrace=1  # Report GC runs.
+      - GODEBUG=  # Debugging disabled.
+    cap_add:
+      # `UdoChattr()`: LINUX_IMMUTABLE.
+      - LINUX_IMMUTABLE
+    command:
+      - bash
+      - -c
+      - |
+        set -o errexit -o nounset -o pipefail -o noglob
+        set -x
+        install -o daemon -g ngfsta -m u=rwx,g=rx -d /nogfso/var/run/nogfsostad/sududod
+        exec \
+        chroot --userspec=daemon:daemon / \
+        env HOME=/ \
+        nogfsostasududod \
+          --log=mu \
+          --sududod-socket=/nogfso/var/run/nogfsostad/sududod/sock \
+          --stad-uids=124 --stad-gids=1023
+
+  # DEPRECATED: `nogfsosdwgctd` is no longer needed, since `git gc` has been
+  # integrated into `nogfsostad`.
+  nogfsosdwgctd-2:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - go:/go
+      - .:/go/src/github.com/nogproject/nog
+      - nogfso-shadow:/nogfso/shadow
+      - ssl:/nog/ssl
+      - jwt:/nog/jwt
+    working_dir: /
+    environment:
+      # `GODEBUG` can be useful, see <https://golang.org/pkg/runtime/>.
+      # - GODEBUG=gctrace=1  # Report GC runs.
+      - GODEBUG=  # Debugging disabled.
+    command:
+      # Use `chroot` to switch the user.
+      - chroot
+      - --userspec=ngfsta2
+      - /
+      # Change HOME to avoid permission denied with `HOME=/root`.
+      - env
+      - HOME=/etc/nogfsostad
+      # Then run `nogfsostad`.
+      - /go/src/github.com/nogproject/nog/backend/bin/nogfsosdwgctd
+      - --config
+      - /etc/nog/ngfsta2.nogfsosdwgctdconfig.sh
+  nogfsosdwgctd-3:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - go:/go
+      - .:/go/src/github.com/nogproject/nog
+      - nogfso-shadow:/nogfso/shadow
+      - ssl:/nog/ssl
+      - jwt:/nog/jwt
+    working_dir: /
+    environment:
+      # `GODEBUG` can be useful, see <https://golang.org/pkg/runtime/>.
+      # - GODEBUG=gctrace=1  # Report GC runs.
+      - GODEBUG=  # Debugging disabled.
+    command:
+      # Use `chroot` to switch the user.
+      - chroot
+      - --userspec=ngfsta3
+      - /
+      # Change HOME to avoid permission denied with `HOME=/root`.
+      - env
+      - HOME=/etc/nogfsostad
+      # Then run `nogfsostad`.
+      - /go/src/github.com/nogproject/nog/backend/bin/nogfsosdwgctd
+      - --config
+      - /etc/nog/ngfsta3.nogfsosdwgctdconfig.sh
+
+  # Either `dc up -d nogfsog2nd` or manually `ddev nogfsog2nd`; but not both.
+  # DEPRECATED: see `backend/HACKING-fso.md`.
+  nogfsog2nd:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - go:/go
+      - gitlab-etc:/etc/gitlab
+      - ssl:/nog/ssl
+    working_dir: /
+    command:
+      - nogfsog2nd
+      - --log=mu
+      - --discovery=watchlist
+      - --prefix=/example/files
+      - --prefix=/example/exinst/data
+      - --prefix=/example/share
+      - --prefix=/example/orgfs
+      - --gitlab=localhost:/etc/gitlab/root.token:http://localhost:80
+      - exreg
+
+  nogfsotard:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - go:/go
+      - .:/go/src/github.com/nogproject/nog
+      - nogfso-shadow:/nogfso/shadow
+      - nogfso-archive:/nogfso/archive
+      - nogfso-tape:/nogfso/tape
+      - nogfso-var:/nogfso/var
+      - ssl:/nog/ssl
+      - jwt:/nog/jwt
+      - orgfs2:/orgfs2:ro
+    working_dir: /
+    environment:
+      # `GODEBUG` can be useful, see <https://golang.org/pkg/runtime/>.
+      # - GODEBUG=gctrace=1  # Report GC runs.
+      - GODEBUG=  # Debugging disabled.
+    cap_add:
+      # Add `cap_dac_read_search` to allow `git` and `tar` binaries to use the
+      # capability; see `setcap` in `./tools/images/godev/Dockerfile`.
+      # `cap_dac_read_search` is not one of the default capabilities that
+      # Docker enables, see "Docker run reference / Runtime privilege and Linux
+      # capabilities".
+      - DAC_READ_SEARCH
+    command:
+      # Install `tartt-is-dir` when starting the container and not in the
+      # Dockerfile, because `tartt-is-dir` is created by make.  Then use
+      # `chroot` to switch the user; change the environment for the new user,
+      # because chroot does not change it; and finally exec the daemon.
+      - bash
+      - -c
+      - |
+        set -o errexit -o nounset -o pipefail -o noglob
+        set -x
+        install -o root -g ngftar -m 0750 /go/bin/tartt-is-dir /usr/local/lib/nogfsotard/tartt-is-dir
+        setcap cap_dac_read_search=ep /usr/local/lib/nogfsotard/tartt-is-dir
+        exec chroot --userspec=ngftar / env HOME=/home/ngftar /go/src/github.com/nogproject/nog/backend/bin/nogfsotard
+  nogfsotargctd:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - go:/go
+      - .:/go/src/github.com/nogproject/nog
+      - nogfso-shadow:/nogfso/shadow
+      - nogfso-archive:/nogfso/archive
+      - nogfso-tape:/nogfso/tape
+      - ssl:/nog/ssl
+      - jwt:/nog/jwt
+    working_dir: /
+    environment:
+      # `GODEBUG` can be useful, see <https://golang.org/pkg/runtime/>.
+      # - GODEBUG=gctrace=1  # Report GC runs.
+      - GODEBUG=  # Debugging disabled.
+    command:
+      # Use `chroot` to switch the user.
+      - chroot
+      - --userspec=ngftar
+      - /
+      # Change the environment for the new user; chroot does not change it.
+      - env
+      - HOME=/home/ngftar
+      # Finally exec the daemon
+      - /go/src/github.com/nogproject/nog/backend/bin/nogfsotargctd
+  nogfsotarsecbakd:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - .:/go/src/github.com/nogproject/nog
+      - nogfso-archive:/nogfso/archive
+      - nogfso-backup:/nogfso/backup
+    working_dir: /
+    environment:
+      # `GODEBUG` can be useful, see <https://golang.org/pkg/runtime/>.
+      # - GODEBUG=gctrace=1  # Report GC runs.
+      - GODEBUG=  # Debugging disabled.
+    command:
+      # Use `chroot` to switch the user.
+      - chroot
+      - --userspec=ngftar
+      - /
+      # Change the environment for the new user; chroot does not change it.
+      - env
+      - HOME=/home/ngftar
+      # Finally exec the daemon.
+      - /go/src/github.com/nogproject/nog/backend/bin/nogfsotarsecbakd
+
+  # Container `tartt-restore` demonstrates how to run `tartt restore` as
+  # non-root using `tar` with capabilities.  Example:
+  #
+  # ```
+  # dc run tartt-restore tartt-restore-as-ngftar ag-alice-restore-1 /nogfso/archive/tartt/1535636840/ag-alice/6c/c7/6cc790b3-51f7-4dbe-b5b7-df54fbda3103.tartt localhost/2018-08-30T134721Z/d5/2018-09-06T145431Z/h1/2018-09-06T155648Z/s0/2018-09-06T155715Z
+  # ```
+  #
+  tartt-restore:
+    build: ./tools/images/godev
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - go:/go
+      - .:/go/src/github.com/nogproject/nog
+      - nogfso-archive:/nogfso/archive:ro
+      - nogfso-tape:/nogfso/tape:ro
+      - orgfs2:/orgfs2
+      - hostsocks:/hostsocks
+    working_dir: /
+    cap_add:
+      # `tartt restore`: CHOWN, DAC_OVERRIDE, FOWNER
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    command:
+      - tartt-restore-as-ngftar
+      - --help
+
+  nogfsorstd:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - go:/go
+      - .:/go/src/github.com/nogproject/nog
+      - nogfso-shadow:/nogfso/shadow
+      - nogfso-archive:/nogfso/archive
+      - nogfso-tape:/nogfso/tape
+      - nogfso-var:/nogfso/var
+      - ssl:/nog/ssl
+      - jwt:/nog/jwt
+      - orgfs2:/orgfs2
+    working_dir: /
+    environment:
+      # `GODEBUG` can be useful, see <https://golang.org/pkg/runtime/>.
+      # - GODEBUG=gctrace=1  # Report GC runs.
+      - GODEBUG=  # Debugging disabled.
+    cap_add:
+      # Add capabilities to allow `tar` to use them; see `setcap` in
+      # `./tools/images/godev/Dockerfile`.
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    command:
+      # Use `chroot` to switch the user.
+      - chroot
+      - --userspec=ngfrst
+      - /
+      # Change the environment for the new user; chroot does not change it.
+      - env
+      - HOME=/home/ngfrst
+      # Finally exec the daemon
+      - nogfsorstd
+      - --log=mu
+      - --host=files.example.com
+      - --prefix=/example/orgfs2/srv/tem-505/ag-alice
+      - --prefix=/example/orgfs2/srv/tem-505/ag-bob
+      - --prefix=/example/orgfs2/srv/tem-505/ag-charly
+      - --prefix=/example/orgfs2/org/ag-alice
+      - exreg
+
+  nogfsosdwbakd3:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - go:/go
+      - .:/go/src/github.com/nogproject/nog
+      - nogfso-shadow:/nogfso/shadow
+      - nogfso-backup:/nogfso/backup
+      - nogfso-var:/nogfso/var
+      - ssl:/nog/ssl
+      - jwt:/nog/jwt
+    working_dir: /
+    environment:
+      # `GODEBUG` can be useful, see <https://golang.org/pkg/runtime/>.
+      # - GODEBUG=gctrace=1  # Report GC runs.
+      - GODEBUG=  # Debugging disabled.
+    cap_add:
+      # Add `cap_dac_read_search` to allow `git` and `tar` binaries to use the
+      # capability; see `setcap` in `./tools/images/godev/Dockerfile`.
+      # `cap_dac_read_search` is not one of the default capabilities that
+      # Docker enables, see "Docker run reference / Runtime privilege and Linux
+      # capabilities".
+      - DAC_READ_SEARCH
+    command:
+      # Use `chroot` to switch the user.
+      - chroot
+      - --userspec=ngfbak
+      - /
+      # Change the environment for the new user; chroot does not change it.
+      - env
+      - HOME=/home/ngfbak
+      # Then exec `nogfsotard`.
+      - /go/src/github.com/nogproject/nog/backend/bin/nogfsosdwbakd3
+
+  nogfsodomd:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - go:/go
+      - ssl:/nog/ssl
+      - jwt:/nog/jwt
+      - orgfs2:/orgfs2
+    working_dir: /
+    environment:
+      # `GODEBUG` can be useful, see <https://golang.org/pkg/runtime/>.
+      # - GODEBUG=gctrace=1  # Report GC runs.
+      - GODEBUG=  # Debugging disabled.
+    command:
+      - nogfsodomd
+      - --sync-domain-start=3s
+      - --sync-domain-every=20s
+      - --group-prefix=org_
+      - --group-prefix=srv_
+      - EXDOM
+
+  # DEPRECATED: `nogfsotchd` is no longer needed, since `git-fso stat` has been
+  # integrated into `nogfsostad`.
+  nogfsotchd3:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - go:/go
+      - .:/go/src/github.com/nogproject/nog
+      - ssl:/nog/ssl
+      - jwt:/nog/jwt
+    working_dir: /
+    environment:
+      - 'NOG_API_URL=http://${DOCKER_TO_HOST_ADDR}:3000/api'
+      # `GODEBUG` can be useful, see <https://golang.org/pkg/runtime/>.
+      # - GODEBUG=gctrace=1  # Report GC runs.
+      - GODEBUG=  # Debugging disabled.
+    command:
+      # Use `chroot` to switch the user.
+      - chroot
+      - --userspec=ngftch
+      - /
+      # Change the environment for the new user; chroot does not change it.
+      - env
+      - HOME=/home/ngftch
+      # Then exec `nogfsotard`.
+      - /go/src/github.com/nogproject/nog/backend/bin/nogfsotchd3
+
+  # Containers `godev-make` and `godev` contain the Go dev commands.  Make uses
+  # the simpler variant `godev-make`.  `godev` is for interactive use.
+  godev-make:
+    build: ./tools/images/godev
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    volumes:
+      - go:/go
+      - dep:/go/pkg/dep
+      - .:/go/src/github.com/nogproject/nog
+      - godev-root-cache:/root/.cache
+      - ssl:/nog/ssl
+      - jwt:/nog/jwt
+    working_dir: /go/src/github.com/nogproject/nog
+    command: |
+      echo 'Usage: See `make help` and CONTRIBUTING.md.'
+  godev:
+    build: ./tools/images/godev
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    network_mode: service:podbase
+    volumes:
+      - go:/go
+      - dep:/go/pkg/dep
+      - .:/go/src/github.com/nogproject/nog
+      - mongo-run:/mongo/run
+      - nogfso-shadow:/nogfso/shadow
+      - nogfso-tartt:/nogfso/tartt
+      - nogfso-archive:/nogfso/archive
+      - nogfso-tape:/nogfso/tape
+      - nogfso-backup:/nogfso/backup
+      - nogfso-var:/nogfso/var
+      - godev-root-ssh:/root/.ssh
+      - godev-root-cache:/root/.cache
+      - gitlab-etc:/etc/gitlab
+      - ssl:/nog/ssl
+      - jwt:/nog/jwt
+      - exinst-data:/exinst/data
+      - orgfs:/orgfs
+      - orgfs2:/orgfs2
+      - hostsocks:/hostsocks
+    working_dir: /go/src/github.com/nogproject/nog
+    cap_add:
+      # `tartt tar`: DAC_READ_SEARCH.
+      # `tartt restore`: CHOWN, DAC_OVERRIDE, FOWNER
+      # `chattr`: LINUX_IMMUTABLE.
+      - CHOWN
+      - DAC_OVERRIDE
+      - DAC_READ_SEARCH
+      - FOWNER
+      - LINUX_IMMUTABLE
+    environment:
+      - 'NOG_API_URL=http://${DOCKER_TO_HOST_ADDR}:3000/api'
+    command: |
+      echo 'Usage: See CONTRIBUTING.md.'
+  # Container `godoc` runs a godoc server on port 6060.
+  godoc:
+    image: ${DEV_IMAGE_REGISTRY}godev:${GODEV_IMAGE_VERSION}
+    ports:
+      - "127.0.0.1:6060:6060"
+    volumes:
+      - go:/go
+        # Bind-mount only subdirs that contain relevant Go code in order to
+        # prevent godoc from scanning the entire Meteor app tree, which would
+        # cause a startup delay of several seconds.
+      - ./backend:/go/src/github.com/nogproject/nog/backend
+    working_dir: /
+    command:
+      - godoc
+      - --http=:6060
+    environment:
+      - no_proxy=localhost,127.0.0.1
+
+  meteordev-make:
+    build: ./tools/images/meteordev
+    image: ${DEV_IMAGE_REGISTRY}meteordev:${METEORDEV_IMAGE_VERSION}
+    volumes:
+      - meteor:/root/.meteor
+      - npm:/root/.npm
+      - .:/srv/nog
+      - meteor-local:/srv/nog/apps/nog-app/meteor/.meteor/local
+      - meteor-node_modules:/srv/nog/apps/nog-app/meteor/node_modules
+    working_dir: /srv/nog
+    command: |
+      echo 'Usage: `make meteor`; see also `make help` and `CONTRIBUTING.md`.'
+
+  dev:
+    build: ./tools/images/dev
+    image: ${DEV_IMAGE_REGISTRY}dev:${DEV_IMAGE_VERSION}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:${PWD}
+    working_dir: ${PWD}
+
+  # Container `hostsocks` can be used to forwards host sockets into containers:
+  #
+  #  - GnuPG agent, see <https://wiki.gnupg.org/AgentForwarding>.
+  #
+  # Start forwarding and all all container users to access GnuPG agent:
+  #
+  # ```
+  # dc up -d hostsocks
+  # ddev rm -fv /hostsocks/S.gpg-agent.extra
+  # ssh -R /hostsocks/S.gpg-agent.extra:$HOME/.gnupg/S.gpg-agent.extra -S none -f -o ExitOnForwardFailure=yes -N -a -x -p 8022 root@localhost
+  # ddev chmod og+rw /hostsocks/S.gpg-agent.extra
+  # ddev find /root/.gnupg/S.gpg-agent /hostsocks -ls
+  # ```
+  #
+  # Check forwarding:
+  #
+  # ```
+  # pgrep -fl ssh.*-R./hostsocks/
+  # ```
+  #
+  # Stop forwarding:
+  #
+  # ```
+  # pkill -fl ssh.*-R./hostsocks/ && ddev rm -fv /hostsocks/S.gpg-agent.extra
+  # ```
+  #
+  hostsocks:
+    image: linuxkit/sshd:v0.3@sha256:4d37b6df78e3733d06bdd0f97e1b6fc32e024020fe03704aa138f2dfbed9ba12
+    ports:
+      - "127.0.0.1:8022:22"
+    volumes:
+      - ~/.ssh/authorized_keys:/root/.ssh/authorized_keys
+      - hostsocks:/hostsocks

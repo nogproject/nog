@@ -1,0 +1,938 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+semver='0.2.0-dev'
+
+version() {
+    echo "nogfsotard-${semver}"
+    exit 0
+}
+
+nogfsotard="$(realpath "${BASH_SOURCE[0]}")"
+
+usage() {
+    cat <<\EOF
+Usage:
+    nogfsotard [--config <config>]
+    nogfsotard [--config <config>] process <repojson>
+    nogfsotard [--config <config>] tar-shadow <shadow>
+
+Options:
+    --config <config>  [default: /etc/nog/nogfsotardconfig.sh]
+        The config file.
+
+`nogfsotard` creates archives of FSO realdirs.  The details are controlled by
+`<config>`.
+
+If there are no changes to the realdir, `nogfsotard` will eventually create a
+single full archive that is suitable for long-term data preservation.  Until
+then, it maintains incremental archives that can be used as backups of the
+realdir.
+
+`nogfsotard` invokes itself as `nogfsotard process ...` to archive a repo.
+`<repojson>` is the information that `nogfsoschd` passes to processing
+commands.
+
+`nogfsotard` invokes itself as `nogfsotard tar-shadow ...` to add a shadow repo
+as metadata to a full tartt archive.
+
+EOF
+    exit 1
+}
+
+main() {
+    argparse "$@"
+    findLib
+    readConfig
+    main_${arg_cmd}
+}
+
+argparse() {
+    arg_cmd=server
+    arg_config='/etc/nog/nogfsotardconfig.sh'
+    while [ $# -gt 0 ]; do
+        case $1 in
+        -h|--help)
+            usage
+            ;;
+        --version)
+            version
+            ;;
+        --version)
+            version
+            ;;
+        --config)
+            if [ $# -lt 2 ]; then
+                die '--config requires an argument.'
+            fi
+            arg_config="$2"
+            shift 2
+            ;;
+        process|tar-shadow)
+            arg_cmd="$1"
+            shift
+            break
+            ;;
+        *)
+            break
+            ;;
+        esac
+    done
+    argparse_${arg_cmd} "$@"
+}
+
+argparse_server() {
+    if [ $# -ne 0 ]; then
+        die 'unknown argument.'
+    fi
+}
+
+argparse_process() {
+    arg_repojson=
+    while [ $# -gt 0 ]; do
+        case $1 in
+        {*)
+            if [ -n "${arg_repojson}" ]; then
+                die 'unexpected argument.'
+            fi
+            arg_repojson="$1"
+            shift
+            ;;
+        *)
+            die 'unknown argument.'
+            ;;
+        esac
+    done
+    if [ -z "${arg_repojson}" ]; then
+        die 'missing <repojson>.'
+    fi
+}
+
+argparse_tar-shadow() {
+    if [ $# -ne 1 ]; then
+        die 'missing <shadow>.'
+    fi
+    arg_shadow="$1"
+}
+
+findLib() {
+    for p in \
+        '/usr/local/lib/nogfsotard' \
+        '/usr/lib/nogfsotard' \
+    ; do
+        if [ -d "${p}" ]; then
+            libNogfsotard="${p}"
+            return
+        fi
+    done
+    die 'Failed to find lib.'
+}
+
+# Lines <var> <eregex>.
+configVariables='
+cfgTarEncryption ^(none|gpg)$
+cfgShadowHost ^\S+$
+cfgShadowRoots ^/\S+$
+cfgCheckMinDf ^/\S+\s+[0-9]+$
+cfgBandwidthLimit ^[0-9]+M$
+cfgFakeArchives ^($|t$)
+cfgCapPath ^($|/\S+$)
+cfgPrivGitRemote ^(none|sudo)$
+cfgPrivGitForEachRef ^(none|sudo|cap)$
+cfgPrivGitArchive ^(none|sudo|cap)$
+cfgTarttStoreName ^($|\S+$)
+'
+
+configFunctions='
+cfgTarttUrlForRepo
+cfgNogfsoschdTartt
+cfgNogfsoctl
+'
+
+# `readConfig` sets defaults for optional variables before sourcing the config
+# file.  It then handles deprecated or newly introduced variables before
+# general pattern-based variable validation, followed by specific handling of
+# some configuration details, like tar encryption and capabilities.
+readConfig() {
+    if ! [ -f "${arg_config}" ]; then
+        die "Missing config file \`${arg_config}\`."
+    fi
+
+    cfgTarttStoreName=
+    source "${arg_config}"
+
+    if ! [ -v cfgTarEncryption ]; then
+        logwarn 'Assuming `cfgTarEncryption=gpg`.  Set `cfgTarEncryption` in the config to avoid this warning.'
+        cfgTarEncryption='gpg'
+    fi
+
+    if [ -v cfgTarRecipients ]; then
+        logwarn 'DEPRECATED: Remove `cfgTarRecipients` from the config; configure per-repo GPG keys to use encryption.'
+        unset cfgTarRecipients
+    fi
+
+    if [ -v cfgGitRemoteSudo ]; then
+        logwarn 'DEPRECATED: `cfgGitRemoteSudo` is deprecated.  Use `cfgPrivGitRemote` instead.'
+        if [ -n "${cfgGitRemoteSudo}" ]; then
+            logwarn 'DEPRECATED: `cfgGitRemoteSudo=t` => assuming `cfgPrivGitRemote=sudo`, `cfgPrivGitForEachRef=cap`, and `cfgPrivGitArchive=cap`.'
+            cfgPrivGitRemote='sudo'
+            cfgPrivGitForEachRef='cap'
+            cfgPrivGitArchive='cap'
+        fi
+        unset cfgGitRemoteSudo
+    fi
+    if isFunction cfgGitRemoteSudoRunas; then
+        logwarn 'DEPRECATED: `cfgGitRemoteSudoRunas()` is no longer used.  Remove it from the configuration file.'
+    fi
+
+    while read -r var ergx; do
+        if [ -z "${ergx}" ]; then
+            continue
+        fi
+        if ! egrep -q -e "${ergx}" <<< "${!var}"; then
+            die "Malformed config variable \`${var}\`."
+        fi
+    done <<< "${configVariables}"
+
+    for fn in ${configFunctions}; do
+        if ! isFunction ${fn}; then
+            die "Missing config function \`${fn}()\`."
+        fi
+    done
+
+    if [ -z "${cfgCapPath}" ]; then
+        withCap() {
+            true
+        }
+    else
+        withCap() {
+            PATH="${cfgCapPath}:${PATH}"
+        }
+    fi
+}
+
+main_server() {
+    log 'Started nogfsoschd.'
+    cfgNogfsoschdTartt -- \
+        "${nogfsotard}" --config "${arg_config}" process
+}
+
+main_process() {
+    processRepo "${arg_repojson}"
+}
+
+main_tar-shadow() {
+    tarShadow "${arg_shadow}"
+}
+
+matchUuid() {
+    local ergx='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    egrep -q "${ergx}" <<<"${1}"
+}
+
+processRepo() {
+    local json="$1"
+    local id registry globalPath realdir shadowPath
+
+    id="$(jq -r '.id' <<<"${json}")"
+    if [ "${id}" = 'null' ]; then
+        die 'missing repo id.'
+    fi
+    if ! matchUuid "${id}"; then
+        die 'malformed repo id.'
+    fi
+
+    registry="$(jq -r '.registry' <<<"${json}")"
+    if [ "${registry}" = 'null' ] || [ -z "${registry}" ]; then
+        die 'missing registry.'
+    fi
+
+    globalPath="$(jq -r '.globalPath' <<<"${json}")"
+    if [ "${globalPath}" = 'null' ] || [ -z "${globalPath}" ]; then
+        die 'missing global path.'
+    fi
+
+    realdir="$(jq -r '.file' <<<"${json}")"
+    if [ "${realdir}" = 'null' ] || [ -z "${realdir}" ]; then
+        log "Ignored repo ${id} without file path."
+        return 0
+    fi
+    realdir="$(cut -d ':' -f 2 <<<"${realdir}")"
+
+    shadowPath="$(jq -r '.shadow' <<<"${json}")"
+    if [ "${shadowPath}" = 'null' ] || [ -z "${shadowPath}" ]; then
+        log "Ignored repo ${id} without shadow path."
+        return 0
+    fi
+    if ! isValidShadowPath "${shadowPath}"; then
+        die "Repo ${id} has invalid shadow path \`${shadowPath}\`."
+    fi
+    shadowPath="$(cut -d ':' -f 2 <<<"${shadowPath}")"
+
+    local tarttUrl tarttUrlPathQuery tarttDir driver tardir
+    tarttUrl="$(jq -r '.archive' <<<"${json}")"
+    local isInit=
+    if [ "${tarttUrl}" = 'null' ] || [ -z "${tarttUrl}" ]; then
+        if ! tarttUrl="$(
+            cfgTarttUrlForRepo  "${id}" "${globalPath}" "${realdir}"
+        )"; then
+            die "Failed to determine tartt URL for repo ${id}."
+        fi
+        isInit=t
+    fi
+
+    local urlPrefix="tartt://${cfgShadowHost}/"
+    case "${tarttUrl}" in
+    ${urlPrefix}*)
+        tarttUrlPathQuery="/${tarttUrl:${#urlPrefix}}"
+        ;;
+    *)
+        die "tartt URL does not start with \`${urlPrefix}\`."
+        ;;
+    esac
+    if grep -q '^/[^?]*?driver=local$' <<<"${tarttUrlPathQuery}"; then
+        tarttDir="${tarttUrlPathQuery%\?driver=local}"
+        tardir=
+    elif grep -q '^/[^?]*?driver=localtape&tardir=/[/a-z0-9_.-]*$' <<<"${tarttUrlPathQuery}"; then
+        tarttDir="${tarttUrlPathQuery%\?*}"
+        tardir="${tarttUrlPathQuery#*\?driver=localtape&tardir=}"
+    else
+        die "Unknown tartt URL format \`${tarttUrl}\`."
+    fi
+
+    if test ${isInit}; then
+        # `--no-vid` to allow a concurrent `init-shadow-backup`.  `init-tartt`
+        # is idempotent or fails.
+        if ! cfgNogfsoctl repo "${id}" --no-vid init-tartt "${tarttUrl}"; then
+            die "Failed to init tartt repo URL."
+        fi
+    fi
+
+    # `stateFile` contains the state of the origin Git refs.  It is stored in
+    # the Tartt repo and committed to Git, so that it is saved in the shadow
+    # repo.  The state is used to determine whether a new archive is required.
+    # Preserving its content is essential to avoiding unnecessary archives,
+    # which may be expensive, in particular full archives.
+    #
+    # `doneFile` is an hard link to `stateFile` to indiate that the complete
+    # operation succeeded, including the push to shadow.  It is stored outside
+    # the Tartt repo, because an indicator that the Git push succeeded cannot
+    # itself be part of the Git history.
+    local stateFile="${tarttDir}/origin.gitrefstate"
+    local doneFile="${tarttDir}.done"
+
+    case ${cfgPrivGitForEachRef} in
+    none)
+        privGitRevParseBranchDir() {
+            local branch="$1"
+            local dir="$2"
+            git -C "${dir}" rev-parse -q --verify "refs/heads/${branch}"
+        }
+        privGitForEachRefDir() {
+            local dir="$1"
+            git -C "${dir}" for-each-ref
+        }
+        privGitIsNewerBranchDirDuration() {
+            local branch="$1"
+            local dir="$2"
+            local duration="$3"
+            [ -n "$(git -C "${dir}" rev-list -n 1 --since="${duration} ago" "refs/heads/${branch}")" ]
+        }
+        privGitIsImmutableFsoStatDir() {
+            local dir="$1"
+            git -C "${dir}" show master-stat:.nogtree 2>/dev/null \
+            | grep -q '^attrs: "i"$'
+        }
+        ;;
+
+    cap)
+        privGitRevParseBranchDir() {
+            local branch="$1"
+            local dir="$2"
+            (
+                withCap \
+                && git -C "${dir}" rev-parse -q --verify "refs/heads/${branch}"
+            )
+        }
+        privGitForEachRefDir() {
+            local dir="$1"
+            (
+                withCap \
+                && git -C "${dir}" for-each-ref
+            )
+        }
+        privGitIsNewerBranchDirDuration() {
+            local branch="$1"
+            local dir="$2"
+            local duration="$3"
+            local rev
+            rev="$(
+                withCap \
+                && git -C "${dir}" rev-list -n 1 --since="${duration} ago" "refs/heads/${branch}"
+            )"
+            [ -n "${rev}" ]
+        }
+        privGitIsImmutableFsoStatDir() {
+            local dir="$1"
+            (
+                withCap \
+                && git -C "${dir}" show master-stat:.nogtree 2>/dev/null
+            ) | grep -q '^attrs: "i"$'
+        }
+        ;;
+
+    sudo)
+        privGitRevParseBranchDir() {
+            local branch="$1"
+            local dir="$2"
+            local runas
+            runas="$(sudo "${libNogfsotard}/stat-dir-owner" "${dir}")"
+            sudo -u "${runas}" \
+                "${libNogfsotard}/git-rev-parse-branch-dir" \
+                "${branch}" "${dir}"
+        }
+        privGitForEachRefDir() {
+            local dir="$1"
+            local runas
+            runas="$(sudo "${libNogfsotard}/stat-dir-owner" "${dir}")"
+            sudo -u "${runas}" \
+                "${libNogfsotard}/git-for-each-ref-dir" "${dir}"
+        }
+        privGitIsNewerBranchDirDuration() {
+            local branch="$1"
+            local dir="$2"
+            local duration="$3"
+            local runas
+            runas="$(sudo "${libNogfsotard}/stat-dir-owner" "${dir}")"
+            local res
+            sudo -u "${runas}" \
+                "${libNogfsotard}/git-is-newer-branch-dir-duration" \
+                "${branch}" "${dir}" "${duration}" \
+            && ec=$? || ec=$?; case ${ec} in
+            10)
+                return 0
+                ;;
+            11)
+                return 1
+                ;;
+            *)
+                die 'Failed to sudo git-is-newer-branch-dir-duration.'
+                ;;
+            esac
+        }
+        privGitIsImmutableFsoStatDir() {
+            local dir="$1"
+            local runas ec
+            runas="$(sudo "${libNogfsotard}/stat-dir-owner" "${dir}")"
+            sudo -u "${runas}" \
+                "${libNogfsotard}/git-is-immutable-fso-stat-dir" "${dir}" \
+            && ec=$? || ec=$?; case ${ec} in
+            10)
+                return 0
+                ;;
+            11)
+                return 1
+                ;;
+            *)
+                die 'Failed to sudo git-is-immutable-fso-stat-dir.'
+                ;;
+            esac
+        }
+        ;;
+
+    *)
+        die 'Invalid `cfgPrivGitForEachRef`.'
+        ;;
+    esac
+
+    # Capture the origin Git state before starting the archive and save the
+    # state after completing the archive, so that changes that happen while the
+    # archive is in progress will result in a changed state and trigger another
+    # archive.
+    local masterStat refsHash
+    if ! masterStat="$(
+        privGitRevParseBranchDir 'master-stat' "${shadowPath}"
+    )"; then
+        die "failed to determine master-stat commit in \`${shadowPath}\`."
+    fi
+    if ! refsHash="$(
+        privGitForEachRefDir "${shadowPath}" \
+        | grep -v 'refs/heads/master-tartt' \
+        | sha256sum | cut -d ' ' -f 1
+    )"; then
+        die 'failed to determine for-each-ref state.'
+    fi
+
+    optFull=
+    local inodeState inodeDone
+    if ! inodeState=$(stat --format=%i "${stateFile}" 2>/dev/null); then
+        log "Repo ${id} without origin state => creating archive."
+    elif ! inodeDone=$(stat --format=%i "${doneFile}" 2>/dev/null); then
+        log "Repo ${id} without done tag => creating archive."
+    elif [ "${inodeState}" != "${inodeDone}" ]; then
+        log "Repo ${id} origin state and done tag mismatch => creating archive."
+    elif grep -F -q "git-master-stat:${masterStat}" "${stateFile}" 2>/dev/null; then
+        # More expensive checks only every 4 days.
+        if [ -z "$(find "${stateFile}" -mtime +4)" ]; then
+            log "Repo ${id} is up to date."
+            return 0
+        fi
+
+        # The latest full archive must eventually contain the latest selected
+        # master-x branches.
+        if tarttLatestIsFull "${tarttDir}" &&
+            grep -F -q "git-for-each-ref-select-sha256:${refsHash}" "${stateFile}" 2>/dev/null;
+        then
+            log "Repo ${id} is up to date; latest is full archive with latest shadow refs."
+            touch "${stateFile}"
+            return 0
+        fi
+
+        local duration='1 month'
+        if privGitIsNewerBranchDirDuration 'master-stat' "${shadowPath}" "${duration}"; then
+            log "Repo ${id} is up to date; no force full, master-stat newer than ${duration}."
+            touch "${stateFile}"
+            return 0
+        fi
+
+        log "Forced full archive for repo ${id}; master-stat older than ${duration}."
+        optFull='--full'
+    else
+        log "Repo ${id} with changed master-stat => creating archive."
+    fi
+
+    if ! checkFreeSpace; then
+        die "skipped archive: insufficient free disk space."
+    fi
+
+    if privGitIsImmutableFsoStatDir "${shadowPath}"; then
+        log "Forced full archive for repo ${id}; master-stat is immutable."
+        optFull='--full'
+    fi
+
+    log "Started archive ${id} ${realdir} git-master-stat:${masterStat}."
+
+    tarttTarArgsEncryption=()
+    case ${cfgTarEncryption} in
+    none)
+        logwarn "Repo ${id} without tar encryption."
+        tarttTarArgsEncryption+=( --insecure-plaintext )
+        ;;
+    gpg)
+        local recipientsJson recipients
+        recipientsJson="$(jq -c '.archiveRecipients' <<<"${json}")"
+        if [ "${recipientsJson}" = 'null' ]; then
+            log "Repo ${id} uses encrypted tar with plaintext secret."
+            tarttTarArgsEncryption+=( --plaintext-secret )
+        else
+            recipients="$(jq -r '.[]' <<<"${recipientsJson}")"
+            if egrep -q -v -e '^[0-9A-F]{40}$' <<<"${recipients}"; then
+                die "Malformed archive recipients \`${recipientsJson}\`."
+            fi
+            for r in ${recipients}; do
+                tarttTarArgsEncryption+=( "--recipient=${r}" )
+            done
+            log "Repo ${id} uses encrypted tar with secret encrypted to$(printf ' %s' ${recipients})."
+        fi
+        ;;
+    *)
+        die 'Invalid `cfgTarEncryption`.'
+        ;;
+    esac
+
+    if ! [ -e "${tarttDir}" ]; then
+        tmpdir="${tarttDir}.tmp"
+        rm -rf "${tmpdir}"
+        mkdir -p "${tmpdir}"
+        tarttInitArgs=(
+            --origin="${realdir}"
+        )
+        if [ -n "${cfgTarttStoreName}" ]; then
+            tarttInitArgs+=(
+                --store="${cfgTarttStoreName}"
+            )
+        fi
+        if [ -n "${tardir}" ]; then
+            mkdir -p "${tardir}"
+            tarttInitArgs+=(
+                --driver-localtape-tardir="${tardir}"
+            )
+        fi
+        tartt -C "${tmpdir}" init "${tarttInitArgs[@]}"
+        git -C "${tmpdir}" init
+        git -C "${tmpdir}" add .
+        git -C "${tmpdir}" commit -m "init tartt repo"
+
+        case ${cfgPrivGitRemote} in
+        sudo)
+            # See `git-remote-ext` <https://git-scm.com/docs/git-remote-ext>.
+            git -C "${tmpdir}" remote add -t master-tartt origin \
+                "ext::%S-sudo-owner $(quoteExtRemote "${shadowPath}")"
+            ;;
+        none)
+            git -C "${tmpdir}" remote add -t master-tartt origin "${shadowPath}"
+            ;;
+        *)
+            die 'Invalid `cfgPrivGitRemote`.'
+            ;;
+        esac
+
+        git -C "${tmpdir}" config remote.origin.push refs/heads/master:refs/heads/master-tartt
+        mv "${tmpdir}" "${tarttDir}"
+        log "Initialized tartt. [tartt ${tarttDir} shadow ${shadowPath}]"
+    else
+        # Migrations can be dropped when all repos have been migrated.
+        migrateToGit "${tarttDir}"
+        migrateAddRemote "${tarttDir}" "${shadowPath}"
+        migrateGitignoreError "${tarttDir}"
+    fi
+
+    local exclude="${tarttDir}/exclude"
+    local tmp="${exclude}.new"
+    excludeListSubrepos "${registry}" "${globalPath}" >"${tmp}"
+    mv "${tmp}" "${exclude}"
+    if [ -s "${exclude}" ]; then
+        log 'Using subrepo exclude list:'
+        cat "${exclude}"
+    else
+        rm "${exclude}" # Remove empty exclude list.
+    fi
+
+    # Use `--error-continue` to complete backups even with "tar: cannot open".
+    # Better have a partial archive than none.  The archive contains
+    # `error.log`.  There should be a process to notify admins to inspect
+    # errors and decide how to proceed.
+    #
+    # Use `--full-hook` to call back to `tar-shadow` for adding the shadow repo
+    # as metadata in full tartt archives.
+    #
+    # Briefly sleep to ensure that the tartt time is always strictly greater
+    # than the master-stat commit time.
+    log "Started tartt ${id} ${realdir} git-master-stat:${masterStat}."
+    sleep 2
+    ( withCap && tartt -C "${tarttDir}" tar \
+        --lock-wait=1h --error-continue \
+        --limit=${cfgBandwidthLimit} \
+        "${tarttTarArgsEncryption[@]}" \
+        ${optFull} \
+        --full-hook="$(
+            printf '%q --config %q tar-shadow %q' \
+                "${nogfsotard}" "${arg_config}" "${shadowPath}"
+        )" \
+    ) && ec=$? || ec=$?; case ${ec} in
+    0)
+        ;;
+    10)
+        log "tar warnings: ${id} ${realdir}"
+        ;;
+    11)
+        log "tar errors: ${id} ${realdir}"
+        ;;
+    *)
+        die "tartt failed: ${id} ${realdir}"
+        ;;
+    esac
+
+    if test "${cfgFakeArchives}"; then
+        (
+            find "${tarttDir}" -name 'data.tar.*' -size +100 -print0 \
+            && if [ -n "${tardir}" ] && [ -d "${tardir}" ]; then
+                find "${tardir}" -name 'data.tar.*' -size +100 -print0
+            fi
+        ) | while read -r -d '' path; do
+            echo 'placeholder' >"${path}"
+            logwarn "FAKE archive: Replaced \`${path}\` with placeholder."
+        done
+    fi
+
+    local tmp="${stateFile}.new"
+    printf >"${tmp}" \
+        'git-master-stat:%s\ngit-for-each-ref-select-sha256:%s\n' \
+        "${masterStat}" "${refsHash}"
+    mv "${tmp}" "${stateFile}"
+    chmod a-w "${stateFile}"
+
+    # Ignore removed files during `git add`, so that it adds files that `tartt
+    # tar` has created but ignores files that a concurrent `tartt gc` might
+    # have deleted.
+    tartt -C "${tarttDir}" lock --lock-wait=1h -- bash -c '
+        git add --ignore-removal . && git commit -m "archive"
+    '
+    git -C "${tarttDir}" push origin
+
+    # Update hard link to indicate that the full operation completed.
+    rm -f "${doneFile}"
+    ln "${stateFile}" "${doneFile}"
+
+    log "Completed archive ${id} ${realdir} git-master-stat:${masterStat}."
+}
+
+isValidShadowPath() {
+    local shadowPath="$1"
+
+    local args=()
+    while read -r path; do
+        if [ -z "${path}" ]; then
+            continue
+        fi
+        args+=( -e "^${cfgShadowHost}:${path}/" )
+    done <<<"${cfgShadowRoots}"
+
+    grep -q ${args[@]} <<<"${shadowPath}"
+}
+
+tarShadow() {
+    local shadow="$1"
+
+    # Do not try to access shadow from Bash if accessing it may require
+    # privileges via sudo or capabilities.  Assume that `git` and `tar` have
+    # access.  `git` will report a reasonable error if shadow is missing.
+    case ${cfgPrivGitArchive} in
+    none)
+        checkShadowDir() {
+            local dir="$1"
+            if ! [ -d "${dir}" ]; then
+                die 'Shadow dir does not exit.'
+            fi
+        }
+        ;;
+    cap)
+        checkShadowDir() {
+            true
+        }
+        ;;
+    sudo)
+        checkShadowDir() {
+            true
+        }
+        ;;
+
+    *)
+        die 'Invalid `cfgPrivGitArchive`.'
+        ;;
+    esac
+
+    # Assume that `withCap` is already active, because `tarShadow` is called as
+    # a `--full-hook` callback.
+    case ${cfgPrivGitArchive} in
+    none|cap)
+        privGitIsValidBranchDir() {
+            local branch="$1"
+            local dir="$2"
+            git -C "${dir}" \
+                rev-parse -q --verify "refs/heads/${branch}" >/dev/null 2>&1
+        }
+        privGitArchiveBranchDir() {
+            local branch="$1"
+            local dir="$2"
+            git -C "${dir}" \
+                archive "refs/heads/${branch}"
+        }
+        ;;
+
+    sudo)
+        privGitIsValidBranchDir() {
+            local branch="$1"
+            local dir="$2"
+            local runas
+            runas="$(sudo "${libNogfsotard}/stat-dir-owner" "${dir}")"
+            sudo -u "${runas}" \
+                "${libNogfsotard}/git-rev-parse-is-valid-branch-dir" \
+                "${branch}" "${dir}" \
+            && ec=$? || ec=$?; case ${ec} in
+            10)
+                return 0
+                ;;
+            11)
+                return 1
+                ;;
+            *)
+                die 'Failed to sudo git-rev-parse-is-valid-branch-dir.'
+            esac
+        }
+        privGitArchiveBranchDir() {
+            local branch="$1"
+            local dir="$2"
+            local runas
+            runas="$(sudo "${libNogfsotard}/stat-dir-owner" "${dir}")"
+            sudo -u "${runas}" \
+                "${libNogfsotard}/git-archive-branch-dir" \
+                "${branch}" "${dir}"
+        }
+        ;;
+
+    *)
+        die 'Invalid `cfgPrivGitArchive`.'
+        ;;
+    esac
+
+    checkShadowDir "${shadow}"
+
+    for branch in master-{meta,sha}; do
+        tar="${branch}.tar"
+        ref="refs/heads/${branch}"
+        if privGitIsValidBranchDir "${branch}" "${shadow}"; then
+            privGitArchiveBranchDir "${branch}" "${shadow}" >"${tar}"
+            echo "${tar}"
+            log "Added metadata ${tar}."
+        fi
+    done
+
+    tar -C "${shadow}" -cf 'shadow.tar' .
+    echo 'shadow.tar'
+    log "Added metadata shadow.tar."
+
+    cat >'README.md' <<\EOF
+README shadow metadata
+======================
+
+`metadata.tar` includes tarballs of the shadow Git repository:
+
+* `master-meta.tar`: Git tree archive with metadata for files and directories.
+* `master-sha.tar`: Git tree archive with SHAs for files.
+* `shadow.tar`: A full tarball of the shadow Git repository.
+EOF
+    echo 'README.md'
+}
+
+checkFreeSpace() {
+    local res=0
+    local path minDf
+    while read -r path minDf; do
+        if [ -z "${minDf}" ]; then
+            continue
+        fi
+        if [ "$(df --output=avail "${path}" | tail -n 1)" -ge ${minDf} ]; then
+            continue
+        fi
+        res=1
+        logerr "Free disk space ${path} < ${minDf}k"
+    done <<<"${cfgCheckMinDf}"
+    return ${res}
+}
+
+# See `git-remote-ext` <https://git-scm.com/docs/git-remote-ext>.
+quoteExtRemote() {
+    local s="$1"
+    s="${s//%/%%}" # Quote literal percent `%` as double percent `%%`.
+    s="${s// /% }" # Quote space ` ` as percent space `% `.
+    printf '%s' "${s}"
+}
+
+tarttLatestIsFull() {
+    tartt -C "$1" ls --no-lock | tail -n 1 | grep -q '^. *[0-9]* *full '
+}
+
+migrateToGit() {
+    local tarttDir="$1"
+    if [ -e "${tarttDir}/.git" ]; then
+        return 0
+    fi
+
+    (
+        cd "${tarttDir}"
+        cat >.gitignore <<\EOF
+*.log
+*.snar
+*.tar
+*.tar.*
+secret.asc
+EOF
+        git init
+        git add .
+        git commit -m "init tartt repo"
+    )
+    log "Initialized git. [tartt ${tarttDir}]"
+}
+
+migrateAddRemote() {
+    local tarttDir="$1"
+    local shadowPath="$2"
+
+    if git -C "${tarttDir}" config remote.origin.url >/dev/null 2>&1; then
+        return 0
+    fi
+
+    git -C "${tarttDir}" remote add -t master-tartt origin "${shadowPath}"
+    git -C "${tarttDir}" config remote.origin.push refs/heads/master:refs/heads/master-tartt
+    log "Initialized git remote. [tartt ${tarttDir} shadow ${shadowPath}]"
+}
+
+migrateGitignoreError() {
+    local tarttDir="$1"
+
+    local gitignore="${tarttDir}/.gitignore"
+    if ! [ -f "${gitignore}" ]; then
+        return 0
+    fi
+
+    if grep -q -F '*.error/' "${gitignore}"; then
+        return 0
+    fi
+
+    printf '*.error/\n' >>"${gitignore}"
+}
+
+# `excludeListSubrepos` prints a list of tar exclude patterns that tell tar to
+# pack empty subrepo placeholders.
+#
+# Implementation:
+#
+# - List repos.
+# - Grep `- JSON` lines.
+# - Strip leading `- `.
+# - Grep reject repo itself, using a fixed-string with double quotes to anchor
+#   the repo global path.
+# - Jq convert to global path list.
+# - Convert to tar exclude glob pattern `./<subrepo-relpath>/*`, escaping tar
+#   glob wildecards in the path.  The pattern tells tar to pack an empty
+#   subrepo placeholder.
+#
+excludeListSubrepos() {
+    local registry="$1"
+    local globalPath="$2"
+    local len=${#globalPath}
+
+    cfgNogfsoctl get repos --global-path-prefix="${globalPath}" "${registry}" \
+    | ( grep '^- ' || true ) \
+    | cut -b 3- \
+    | ( grep -v -F "\"globalPath\":\"${globalPath}\"" || true ) \
+    | jq -r '.globalPath' \
+    | while read -r path; do
+        printf '%s\n' ".$(escapeTarGlob "${path:${len}}")/*"
+    done
+}
+
+# See <https://www.gnu.org/software/tar/manual/html_section/tar_49.html>
+escapeTarGlob() {
+    local s="${1}"
+    s="${s//\\/\\\\}" # First protect backslash as double backslash.
+    s="${s//\*/\\*}"  # Then protect `*`, `?`, and `[` by backslash.
+    s="${s//\?/\\?}"
+    s="${s//[/\\[}"
+    printf '%s' "${s}"
+}
+
+log() {
+    echo >&2 "$(date -Iseconds -u)" '[nogfsotard]' "$@"
+}
+
+logwarn() {
+    log 'warning:' "$@"
+}
+
+logerr() {
+    log 'error:' "$@"
+}
+
+die() {
+    printf >&2 'fatal: %s\n' "$1"
+    exit 1
+}
+
+isFunction() {
+    declare -f "$1" >/dev/null
+}
+
+main "$@"

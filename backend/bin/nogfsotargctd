@@ -1,0 +1,241 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+semver='0.2.0-dev'
+
+version() {
+    echo "nogfsotargctd-${semver}"
+    exit 0
+}
+
+nogfsotargctd="$(realpath "${BASH_SOURCE[0]}")"
+
+usage() {
+    cat <<\EOF
+Usage:
+    nogfsotargctd [--config <config>]
+    nogfsotargctd [--config <config>] process <repojson>
+
+Options:
+    <config>  [default: /etc/nog/nogfsotargctdconfig.sh]
+        The config file.
+
+`nogfsotargctd` performs regular garbage collection on tartt repos that track
+FSO realdirs.  The details are controlled by `<config>`.
+
+`nogfsotargctd` invokes itself as `nogfsotargctd process ...` to process a
+repo.  `<repojson>` is the information that `nogfsoschd` passes to processing
+commands.
+
+EOF
+    exit 1
+}
+
+main() {
+    argparse "$@"
+    readConfig
+    main_${arg_cmd}
+}
+
+argparse() {
+    arg_cmd=server
+    arg_config='/etc/nog/nogfsotargctdconfig.sh'
+    while [ $# -gt 0 ]; do
+        case $1 in
+        -h|--help)
+            usage
+            ;;
+        --version)
+            version
+            ;;
+        --config)
+            if [ $# -lt 2 ]; then
+                die '--config requires an argument.'
+            fi
+            arg_config="$2"
+            shift 2
+            ;;
+        process)
+            arg_cmd="$1"
+            shift
+            break
+            ;;
+        *)
+            break
+            ;;
+        esac
+    done
+    argparse_${arg_cmd} "$@"
+}
+
+argparse_server() {
+    if [ $# -ne 0 ]; then
+        die 'unknown argument.'
+    fi
+}
+
+argparse_process() {
+    arg_repojson=
+    while [ $# -gt 0 ]; do
+        case $1 in
+        {*)
+            if [ -n "${arg_repojson}" ]; then
+                die 'unexpected argument.'
+            fi
+            arg_repojson="$1"
+            shift
+            ;;
+        *)
+            die 'unknown argument.'
+            ;;
+        esac
+    done
+    if [ -z "${arg_repojson}" ]; then
+        die 'missing <repojson>.'
+    fi
+}
+
+# Lines <var> <eregex>.
+configVariables='
+cfgShadowHost ^\S+$
+'
+
+configFunctions='
+cfgNogfsoschdTarttGc
+'
+
+readConfig() {
+    if ! [ -f "${arg_config}" ]; then
+        die "Missing config file \`${arg_config}\`."
+    fi
+
+    source "${arg_config}"
+
+    while read -r var ergx; do
+        if [ -z "${ergx}" ]; then
+            continue
+        fi
+        if ! egrep -q -e "${ergx}" <<< "${!var}"; then
+            die "Malformed config variable \`${var}\`."
+        fi
+    done <<< "${configVariables}"
+
+    for fn in ${configFunctions}; do
+        if ! isFunction ${fn}; then
+            die "Missing config function \`${fn}()\`."
+        fi
+    done
+}
+
+main_server() {
+    log 'Started nogfsoschd.'
+    cfgNogfsoschdTarttGc -- "${nogfsotargctd}" --config "${arg_config}" process
+}
+
+main_process() {
+    gcRepo "${arg_repojson}"
+}
+
+matchUuid() {
+    local ergx='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    egrep -q "${ergx}" <<<"${1}"
+}
+
+gcRepo() {
+    local json="$1"
+    local id
+
+    id="$(jq -r '.id' <<<"${json}")"
+    if [ "${id}" = 'null' ]; then
+        die 'missing repo id.'
+    fi
+    if ! matchUuid "${id}"; then
+        die 'malformed repo id.'
+    fi
+
+    local tarttUrl tarttUrlPathQuery tarttDir driver
+    tarttUrl="$(jq -r '.archive' <<<"${json}")"
+    if [ "${tarttUrl}" = 'null' ] || [ -z "${tarttUrl}" ]; then
+        return 0
+    fi
+
+    local urlPrefix="tartt://${cfgShadowHost}/"
+    case "${tarttUrl}" in
+    ${urlPrefix}*)
+        tarttUrlPathQuery="/${tarttUrl:${#urlPrefix}}"
+        ;;
+    *)
+        die "tartt URL does not start with \`${urlPrefix}\`."
+        ;;
+    esac
+    if grep -q '^/[^?]*?driver=local$' <<<"${tarttUrlPathQuery}"; then
+        tarttDir="${tarttUrlPathQuery%\?driver=local}"
+    elif grep -q '^/[^?]*?driver=localtape&tardir=/[/a-z0-9_.-]*$' <<<"${tarttUrlPathQuery}"; then
+        tarttDir="${tarttUrlPathQuery%\?*}"
+    else
+        die "Unknown tartt URL format \`${tarttUrl}\`."
+    fi
+
+    if ! [ -d "${tarttDir}" ]; then
+        die "repo ${id} missing tartt repo dir \`${tarttDir}\`."
+    fi
+
+    cd "${tarttDir}"
+    log "Started gc ${id}. [tartt ${tarttDir}]"
+
+    tartt --lock-wait=1h gc
+
+    if ! [ -e '.git' ]; then
+        log "Completed gc ${id}: no git."
+        return 0
+    fi
+
+    # Limit `git add` to known files in `stores/`, so that it removes files
+    # that `tartt gc` has deleted but does not add files that a concurrent
+    # `tartt tar` might have created.
+    tartt lock --lock-wait=1h -- bash -c '
+        set -o errexit -o nounset -o pipefail -o noglob
+        git add -u stores
+        if [ -z "$(git status --porcelain)" ]; then
+            exit 10
+        fi
+        git commit -m gc
+        git gc
+    ' \
+    && ec=$? || ec=$?; case ${ec} in
+    0) # New commit.  Continue.
+        ;;
+    10) # No changes.
+        log "Completed gc ${id}: git unchanged."
+        return 0
+        ;;
+    *) # Unexpected error
+        die 'git commit failed.'
+        ;;
+    esac
+
+    if ! git config remote.origin.url >/dev/null 2>&1; then
+        log "Completed gc ${id}: no git remote."
+        return 0
+    fi
+
+    git push origin
+
+    log "Completed gc ${id}: pushed."
+}
+
+log() {
+    echo >&2 "$(date -Iseconds -u)" '[nogfsotargctd]' "$@"
+}
+
+die() {
+    printf >&2 'fatal: %s\n' "$1"
+    exit 1
+}
+
+isFunction() {
+    declare -f "$1" >/dev/null
+}
+
+main "$@"

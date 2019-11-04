@@ -1,0 +1,215 @@
+# Use `../../../tools/bin/gen-settings` to create `settings.json`.
+
+# The JSON template is a YAML string in order to replace booleans by mustaches.
+---
+|
+    {
+        "GITHUB_CLIENT_ID": "{{ githubId }}",
+        "GITHUB_CLIENT_SECRET": "{{ githubSecret }}",
+        "GITIMP_CLIENT_ID": "{{ gitimpId }}",
+        "GITIMP_CLIENT_SECRET": "{{ gitimpSecret }}",
+        "GITZIB_CLIENT_ID": "{{ gitzibId }}",
+        "GITZIB_CLIENT_SECRET": "{{ gitzibSecret }}",
+        "oauthSecretKey": "{{ rand128bit-base64 }}",
+        "from": "{{ from }}",
+        "adminEmails": ["{{ adminEmails }}"],
+        "NogAuthMasterKeys": [
+            { "keyid": "{{ randhex20-0 }}", "secretkey": "{{ randhex40-0 }}" }
+        ],
+        "//": "See `packages/nog-multi-bucket/README.md` for `multiBucket` options.",
+        "multiBucket": {
+            "readPrefs": ["{{ bucket }}"],
+            "writePrefs": ["{{ bucket }}"],
+            "fallback": "{{ bucket }}",
+            "buckets": [
+                {
+                    "name": "{{ bucket }}",
+                    "region": "{{ AWSBucketRegion }}",
+                    "accessKeyId": "{{ accessKeyId }}",
+                    "secretAccessKey": "{{ secretKey }}",
+                    "check": "healthy"
+                }
+            ]
+        },
+        "programTrust": {
+            "repoWhitelist": [
+                "^sprohaska/.*$",
+                "^nog/.*$"
+            ],
+            "registryWhitelist": [
+                "sprohaska/admin_trusted-programs_2015",
+                "nog/packages"
+            ]
+        },
+        "public": {
+            "ROOT_URL": "http://localhost:3000",
+            "upload": {
+                "concurrentPuts": 10,
+                "concurrentPutsSafari": 4,
+                "concurrentUploads": 3,
+                "uploadRetries": 9,
+                "uploadSizeLimit": 30000000
+            },
+            "tests": {
+                "passwords": {
+                    "user": "{{ password }}"
+                }
+            },
+            "optTestingUsers": {{ optTestingUsers }},
+            "optTextSearch": {{ optTextSearch }},
+            "optShowVersions": {{ optShowVersions }},
+            "imgPreviewSizeLimit": {{ imgPreviewSizeLimit }},
+            "optHideDisclaimer": {{ optHideDisclaimer }},
+            "disclaimer": "{{ disclaimer }}",
+            "announcements": [
+                "{{ announcement }}"
+            ]
+        },
+        "maxNumFavoriteRepos": {{ maxNumFavoriteRepos }},
+        "maxNumRecentRepos": {{ maxNumRecentRepos }},
+        "optStrictRepoMembership": {{ optStrictRepoMembership }},
+        "optDebugApiErrors": {{ optDebugApiErrors }},
+        "cluster": {
+            "optSingleInstanceMode": {{ optSingleInstanceMode }},
+            "maxIdPartitions": {
+                "default": {{ maxIdPartitions_default }},
+                "searchIndex": {{ maxIdPartitions_searchIndex }},
+                "updateKinds": {{ maxIdPartitions_updateKinds }}
+            }
+        },
+        "tests": {
+            "aws": {
+            "testbucket": "{{ bucket }}"
+            }
+        }
+    }
+---
+id: bucket
+q: 'Name of the S3 bucket to use for testing (some parts of the app will work
+    if you enter an invalid bucket):'
+---
+id: region
+q: 'Name of the S3 bucket region:'
+choices:
+    - eu-central-1
+    - eu-west-1
+    - us-east-1
+    - us-west-2
+---
+id: accessKeyId
+q: 'AWS Access Key Id to access the S3 bucket:'
+---
+id: secretKey
+q: 'Corresponding AWS Secret Access key:'
+---
+id: githubId
+q: 'GitHub developer application id to use for OAuth accounts (password login
+    will work if you enter an invalid id):'
+---
+id: githubSecret
+q: 'Corresponding GitHub developer application secret:'
+---
+id: gitimpId
+q: 'git.imp GitLab application id to use for OAuth accounts; an invalid id can
+    be used for testing; password login will still work:'
+---
+id: gitimpSecret
+q: 'Corresponding git.imp GitLab application secret:'
+---
+id: gitzibId
+q: 'git.zib GitLab application id to use for OAuth accounts; an invalid id can
+    be used for testing; password login will still work:'
+---
+id: gitzibSecret
+q: 'Corresponding git.zib GitLab application secret:'
+---
+id: from
+q: 'From address when sending email (when you deploy the app, you also need to
+    configure the environment variable MAIL_URL; see Email section in Meteor
+    doc):'
+---
+id: adminEmails
+q: 'Email address of admin for notification mails. (To set additional
+    addresses, open the settings file and extend the address array manually.)'
+---
+id: password
+q: 'Password that will be used for the a local testing user:'
+---
+id: optTestingUsers
+q: 'Create and display local testing users:'
+choices:
+    - 'true'
+    - 'false'
+---
+id: optTextSearch
+q: 'Enable MongoDB fulltext search:'
+choices:
+    - 'true'
+    - 'false'
+---
+id: optShowVersions
+q: 'Display application version in footer (usually disable this for local
+    testing):'
+choices:
+    - 'false'
+    - 'true'
+---
+id: maxNumFavoriteRepos
+q: 'The maximum number of favorite repos displayed in the dashboard:'
+---
+id: maxNumRecentRepos
+q: 'The maximum number of recently visited repos displayed in the dashboard:'
+---
+id: optStrictRepoMembership
+q: 'Enable strict repo membership checking (see devdoc):'
+choices:
+    - 'true'
+    - 'false'
+---
+id: optDebugApiErrors
+q: 'Enable sending debugging information to rest clients (should not be enabled
+    in production):'
+choices:
+    - 'false'
+    - 'true'
+---
+id: imgPreviewSizeLimit
+q: 'Size limit for image preview, in bytes:'
+---
+id: optHideDisclaimer
+q: 'Hide disclaimer:'
+choices:
+    - 'false'
+    - 'true'
+---
+id: disclaimer
+q: 'Disclaimer text; leave empty to use the default text:'
+---
+id: announcement
+q: 'Announcement that will be displayed at the top of the page. To clear the
+    announcements or add further announcements, open the settings file and
+    change the announcements array manually.'
+---
+id: optSingleInstanceMode
+q: 'Single instance mode controls whether an application instance immediately
+    handles update tasks, such as repo kinds and search index, overriding the
+    MongoDB TTL for application cluster leases; usually choose `true` to enable
+    single instance mode for local testing and choose `false` to disable it for
+    horizontally scalable production deployments.'
+choices:
+    - 'true'
+    - 'false'
+---
+id: maxIdPartitions_default
+q: 'The default maximum number of partitions for tasks that are distributed
+    when using multiple app instances.  Usually use 1 for testing.  The number
+    needs to be sufficiently large when a fair distribution of work between all
+    app instances is desired.'
+---
+id: maxIdPartitions_searchIndex
+q: 'The maximum number of partitions for the search index updates.  Usually 1
+    for testing.'
+---
+id: maxIdPartitions_updateKinds
+q: 'The maximum number of partitions for the repo kinds updates.  Usually 1 for
+    testing.'

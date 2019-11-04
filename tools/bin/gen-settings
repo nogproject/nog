@@ -1,0 +1,71 @@
+#!/usr/bin/env python2.7
+# We use Python 2.7, because I(spr) had problems installing pyqa with pip3.
+
+from base64 import b64encode
+from binascii import hexlify
+from os import urandom
+from pyqa import ask
+from pystache import render
+from sys import stderr
+from yaml import safe_load_all
+import json
+
+
+out = 'settings.json'
+local = '_private/settings.json'
+
+
+def main():
+    tpl = readTemplate()
+    answers = ask(tpl['questions'])
+    answers.update(randoms())
+    settings = tpl['settings']
+    if isinstance(settings, dict):
+        settings = stringify_pretty(tpl['settings'])
+    settings = render(settings, answers)
+    with open(out, 'w') as f:
+        f.write(settings)
+    print('')
+    print('Settings written to `{}`.  '
+          'Usually move to `{}`.'.format(out, local))
+
+
+def readTemplate():
+    path = 'settings-template.yml'
+    try:
+        return read(path)
+    except IOError:
+        die('Failed to read `{path}`; run `gen-settings` in the toplevel '
+            'directory of a Meteor application with a `{path}` '
+            'file.'.format(path=path))
+
+
+def read(path):
+    with open(path) as f:
+        tpl = list(safe_load_all(f))
+    return {
+        'settings': tpl[0],
+        'questions': tpl[1:]
+    }
+
+
+def randoms():
+    return {
+        'randhex20-0': hexlify(urandom(10)),
+        'randhex20-1': hexlify(urandom(10)),
+        'randhex40-0': hexlify(urandom(20)),
+        'randhex40-1': hexlify(urandom(20)),
+        'rand128bit-base64': b64encode(urandom(16))
+    }
+
+
+def stringify_pretty(d):
+    return json.dumps(d, sort_keys=True, ensure_ascii=False, indent=2) + '\n'
+
+
+def die(msg):
+    stderr.write('Error: {}\n'.format(msg))
+    exit(1)
+
+
+main()

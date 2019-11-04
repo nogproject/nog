@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+
+from copy import copy, deepcopy
+import json
+import nog
+import os
+import random
+import string
+
+originName = 'fake2_microscope_2015'
+destName = 'fake2_celltracking-timeseries_2015'
+
+
+def main():
+    origin = nog.openRepo(originName)
+    originCommit = origin.getMaster()
+    (dest, master) = ensureDatalistWorkspaceRepo(destName)
+
+    root = master.tree
+
+    if True:  # Can be disabled to avoid resetting the tree.
+        root = emptyRootTree()
+
+    datalist = next(root.trees('datalist'))
+
+    for p in ['datalist/2015-07-05/*.avi', 'datalist/2015-07-01/*.avi']:
+        data = cloneWithOrigin(origin, originCommit, p)
+        datalist.insert(0, data)
+        head = newVersion(data, 'Edit meta')
+        head.meta['study'] = 'fake-celltracking'
+        head.meta['analysis'] = 'analysis-workflow-test'
+
+    master = dest.commitTree(
+            subject='Add data', tree=root, parent=master.sha1
+        )
+    print(master.sha1, stringify_pretty(master.content))
+
+
+# Copy entry with origin information as versions entry.
+def cloneWithOrigin(srcRepo, srcCommit, pathspec):
+    def resolve(commit, pathspec):
+        path = []
+        pathspec = pathspec.split('/')
+        initial, last = pathspec[:-1], pathspec[-1]
+        tree = commit.tree
+        for p in initial:
+            tree = next(tree.trees(p))
+            path.append(tree.name)
+        ent = next(tree.entries(last))
+        path.append(ent.name)
+        return (ent, '/'.join(path))
+    ent, path = resolve(srcCommit, pathspec)
+    clone = nog.Tree()
+    clone.name = ent.name
+    clone.meta['versions'] = {
+        'remotes': [
+            {
+                'repoFullName': srcRepo.fullName,
+                'namePath': path,
+                'refName': 'branches/master',
+                'commitId': srcCommit.sha1,
+                'sha1': ent.sha1
+            }
+        ]
+    }
+    ent = deepcopy(ent)
+    clone.append(ent)
+    return clone
+
+
+def versionsHead(entry):
+    if 'versions' in entry.meta:
+        return next(entry.entries())
+    else:
+        return entry
+
+
+def newVersion(entry, message):
+    if 'versions' in entry.meta:
+        mve = entry
+    else:
+        mve = nog.Tree()
+        mve.name = entry.name
+        mve.meta['versions'] = {}
+        mve.append(entry)
+    prev = versionsHead(mve)
+    head = deepcopy(prev)
+    head.meta['history'] = {
+        'parents': [prev.sha1],
+        'message': message
+    }
+    mve.insert(0, head)
+    return head
+
+
+def ensureDatalistWorkspaceRepo(repo):
+    try:
+        remote = nog.openRepo(repo)
+        master = remote.getMaster()
+    except RuntimeError as err:
+        if 'ERR_REPO_MISSING' not in str(err):
+            raise
+        remote = nog.createRepo(repo)
+        master = remote.getMaster()
+        root = emptyRootTree()
+        master = remote.commitTree(
+                subject='Create datalist', tree=root, parent=master.sha1)
+
+    root = master.tree
+    if 'workspace' not in root.meta:
+        raise RuntimeError('Root tree without `meta.workspace`.')
+    datalist = next(root.trees('datalist'))
+    if 'datalist' not in datalist.meta:
+        raise RuntimeError('`datalist` tree without `meta.datalist`.')
+    return (remote, master)
+
+
+def emptyRootTree():
+    root = emptyWorkspaceRootTree()
+    datalist = nog.Tree()
+    datalist.name = 'datalist'
+    datalist.meta['datalist'] = {}
+    root.append(datalist)
+    return root
+
+
+def emptyWorkspaceRootTree():
+    root = nog.Tree()
+    root.name = 'Chemotaxis timeseries'
+    root.meta['workspace'] = {}
+    return root
+
+
+def stringify_pretty(d):
+    return json.dumps(d, sort_keys=True, ensure_ascii=False, indent=2) + '\n'
+
+
+main()

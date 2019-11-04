@@ -1,0 +1,32 @@
+.row
+  .col-md-12
+    h4 Access toggles
+.row
+  .col-md-12
+    p
+      | isAdmin:
+      if testAccess_ready 'isAdmin'
+        if testAccess 'isAdmin'
+          a(href='/admin') yes
+        else
+          | no
+      else
+        | loading...
+    p
+      | isUser:
+      if testAccess 'isUser'
+        a(href='/profile') yes
+      else
+        | no
+    p
+      | mayUpload:
+      if testAccess 'nog-blob/upload'
+        a(href='/upload') yes
+      else
+        | no
+    p
+      | mayDownload:
+      if testAccess 'nog-blob/download'
+        a(href='/download') yes
+      else
+        | no

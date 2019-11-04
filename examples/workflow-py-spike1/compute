@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+
+from io import StringIO
+from copy import copy, deepcopy
+from datetime import datetime
+import json
+import nog
+import os
+import random
+import string
+import sys
+
+xout = StringIO()
+
+
+def printmsg(*args):
+    print(*args, file=xout)
+    print(*args)
+
+
+def main():
+    if len(sys.argv) != 3:
+        raise RuntimeError('Invalid number of args.')
+    if sys.argv[1] != '--params':
+        raise RuntimeError('Invalid arguments.')
+    params = json.loads(sys.argv[2])
+    printmsg('params', stringify_pretty(params))
+
+    workspace = nog.openRepo(params['nog']['workspaceRepo'])
+    master = workspace.getMaster()
+    root = master.tree
+
+    # The program should perhaps not access the job but only print a log to
+    # stdout, which the executor attaches to the job.  But without executor, it
+    # seems useful to have the main computation and the logging in a single
+    # script.
+    job = findJob(root, params['nog']['job'])
+    printmsg(stringify_pretty(job.content))
+
+    datalist = next(root.trees('datalist'))
+    try:
+        results = next(root.trees('results'))
+    except StopIteration:
+        results = nog.Tree()
+        results.name = 'results'
+        root.append(results)
+
+    workspace.prefetchBlobs(d.blob for d in datalist.objects())
+    result = computeAll(datalist, params)
+    results.insert(0, result)
+
+    try:
+        log = next(root.trees('log'))
+        addLogEntry(
+                log, auto=True,
+                description='Completed job ' + job.meta['job']['id'],
+                content='Completed celltracking job.'
+            )
+    except StopIteration:
+        pass
+
+    completeJob(job)
+
+    master = workspace.commitTree(
+            subject='Add results for job ' + params['nog']['job']['id'],
+            tree=root, parent=master.sha1
+        )
+    printmsg(master.sha1, stringify_pretty(master.content))
+
+
+# An alternative would be to store stdout and so on in a blob to avoid less
+# important content in mongo.
+def completeJob(job):
+    job.meta['job']['status'] = 'completed'
+    stdout = nog.Object()
+    stdout.name = 'stdout'
+    stdout.meta['description'] = 'stdout of job execution'
+    stdout.meta['content'] = xout.getvalue()
+    job.insert(0, stdout)
+
+
+def addLogEntry(log, description, content, auto=None):
+    auto = auto or True
+    date = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+    entry = nog.Object()
+    entry.name = date + '.md'
+    entry.meta['logentry'] = {
+        'date': date,
+        'automatic': auto
+    }
+    entry.meta['description'] = description
+    entry.meta['content'] = content
+    log.insert(0, entry)
+
+
+def findJob(tree, job):
+    jobs = next(tree.trees('jobs'))
+    j = next(jobs.trees(job['id']))
+    if j.sha1 != job['sha1']:
+        raise RuntimeError('job sha1 mismatch.')
+    return j
+
+
+def computeAll(datalist, params):
+    results = nog.Tree()
+    results.name = params['nog']['job']['id']
+
+    summary = nog.Object()
+    results.append(summary)
+    summary.name = 'summary.md'
+    sumd = '# Summary Report\n\n'
+
+    for d in datalist.objects():
+        name = d.name
+        specimen = d.meta['specimen']
+        sumd = sumd + (' - [specimen {0}]({0}): {1}\n'.format(specimen, name))
+
+        restree = nog.Tree()
+        restree.name = specimen
+        restree.meta['specimen'] = specimen
+
+        report = nog.Object()
+        report.name = 'report.md'
+        report.meta['content'] = '# Report {0}\n\n'.format(specimen)
+        restree.append(report)
+
+        ts = nog.Tree()
+        ts.name = 'input-timeseries'
+        ts.meta['specimen'] = specimen
+        ts.append(d)
+        restree.append(ts)
+
+        printmsg('Fake processing {0}...'.format(name))
+        tmpfile = 'tmpfile'
+        d.linkBlob(tmpfile)
+        with open(tmpfile, 'rb') as fp:
+            dat = fp.read()
+        os.remove(tmpfile)
+
+        res = nog.Object()
+        res.meta['specimen'] = specimen
+        res.name = 'tracking-result-' + specimen + '.csv'
+        restree.append(res)
+
+        results.append(restree)
+
+    summary.meta['content'] = sumd
+    return results
+
+
+def stringify_pretty(d):
+    return json.dumps(d, sort_keys=True, ensure_ascii=False, indent=2) + '\n'
+
+
+main()

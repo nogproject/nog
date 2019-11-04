@@ -1,0 +1,56 @@
+{
+  "name": "nog-app-2",
+  "private": true,
+  "scripts": {
+    "start": "meteor run --settings _private/settings.json",
+    "lint": "\"$(git rev-parse --show-toplevel)\"/node_modules/.bin/eslint --ext .js --ext .jsx .",
+    "lint-fix": "npm run lint -- --fix",
+    "settings": "\"$(git rev-parse --show-toplevel)\"/tools/bin/readlink -f _private/settings.json",
+    "settings-help": "NOG_SETTINGS_HELP=1 meteor npm start -- --port 3333 --once",
+    "test": "npm-run-all test-headless test-full-app-headless",
+    "test-watch": "TEST_WATCH=1 meteor test --driver-package meteortesting:mocha",
+    "test-headless": "TEST_BROWSER_DRIVER=chrome meteor test --once --driver-package meteortesting:mocha",
+    "test-full-app-watch": "TEST_WATCH=1 meteor test --full-app --driver-package meteortesting:mocha --settings _private/settings.json",
+    "test-full-app-headless": "TEST_BROWSER_DRIVER=chrome meteor test --full-app --once --driver-package meteortesting:mocha --settings _private/settings.json",
+    "visualize": "meteor --production --extra-packages bundle-visualizer --settings _private/settings.json"
+  },
+  "dependencies": {
+    "@babel/runtime": "^7.1.5",
+    "body-parser": "^1.18.3",
+    "bootstrap": "^4.3.1",
+    "connect": "^3.6.6",
+    "grpc": "^1.19.0",
+    "jquery": "^3.4.1",
+    "jsonwebtoken": "^8.5.1",
+    "ldapjs": "^1.0.2",
+    "meteor-node-stubs": "^0.4.1",
+    "moment": "^2.24.0",
+    "node-forge": "^0.8.2",
+    "path-to-regexp": "^3.0.0",
+    "popper.js": "^1.15.0",
+    "prop-types": "^15.7.2",
+    "protobufjs": "^6.8.8",
+    "react": "^16.8.6",
+    "react-dom": "^16.8.6",
+    "react-router-dom": "^5.0.0",
+    "underscore": "^1.9.1"
+  },
+  "meteor": {
+    "mainModule": {
+      "client": "client/main.js",
+      "server": "server/main.js"
+    },
+    "testModule": {
+      "client": "tests/client-tests.js",
+      "server": "tests/server-tests.js"
+    }
+  },
+  "devDependencies": {
+    "chai": "^4.2.0",
+    "chromedriver": "^2.46.0",
+    "npm-run-all": "^4.1.5",
+    "selenium-webdriver": "^3.6.0",
+    "sinon": "^7.3.1",
+    "sinon-chai": "^3.3.0"
+  }
+}

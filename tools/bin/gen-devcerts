@@ -1,0 +1,97 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o noglob -o pipefail
+
+confdir="$PWD/tools/lib/devcerts"
+nogAppPrivateRel="apps/nog-app/meteor/_private/nogappd-devcert"
+nogAppPrivate="$PWD/${nogAppPrivateRel}"
+fsoTestappPrivateRel='web/apps/fso-testapp/_private/fso-testapp-devcert'
+fsoTestappPrivate="$PWD/${fsoTestappPrivateRel}"
+nogApp2PrivateRel="web/apps/nog-app-2/_private/nog-app-2-devcert"
+nogApp2Private="$PWD/${nogApp2PrivateRel}"
+ssldir='/nog/ssl'
+
+main() {
+    set -x
+    mkdir -p "${ssldir}/ca"
+    pushd "${ssldir}/ca" >/dev/null
+
+    initCa
+    genCert clientserver nogfsoregd
+    genCert clientserver nogfsostad
+    genCert clientserver nogfsorstd
+    genCert clientserver nogfsodomd
+    genCert clientserver nogfsog2nd
+    genCert client nogfsoschd
+    genCert client nogfsotard
+    genCert client nogfsosdwbakd3
+    genCert client nogfsosdwgctd
+    genCert client nogfsotchd3
+    genCert client alice
+    genCert client bob
+    genCert client nogappd
+    genCert signing nogapp-iam
+    genCert client fso-testapp
+    genCert signing fso-testapp-iam
+    genCert client nog-app-2
+    genCert signing nog-app-2-iam
+
+    if ! [ -d "${nogAppPrivate}" ]; then
+        mkdir -m 0700 "${nogAppPrivate}"
+    fi
+    cp /nog/ssl/certs/nogappd/{ca,combined}.pem "${nogAppPrivate}"
+    cp /nog/ssl/certs/nogapp-iam/combined.pem \
+        "${nogAppPrivate}/jwt-iss.combined.pem"
+
+    if ! [ -d "${fsoTestappPrivate}" ]; then
+        mkdir -m 0700 "${fsoTestappPrivate}"
+    fi
+    cp /nog/ssl/certs/fso-testapp/{ca,combined}.pem "${fsoTestappPrivate}"
+    cp /nog/ssl/certs/fso-testapp-iam/combined.pem \
+        "${fsoTestappPrivate}/jwt-iss.combined.pem"
+
+    if ! [ -d "${nogApp2Private}" ]; then
+        mkdir -m 0700 "${nogApp2Private}"
+    fi
+    cp /nog/ssl/certs/nogappd/{ca,combined}.pem "${nogApp2Private}"
+    cp /nog/ssl/certs/nogapp-iam/combined.pem \
+        "${nogApp2Private}/jwt-iss.combined.pem"
+
+    popd >/dev/null
+    set +x
+
+    echo
+    echo "# Output files in container:"
+    find "${ssldir}" -type f | sort
+
+    echo
+    echo "# Output files in worktree:"
+    find "${nogAppPrivateRel}" -type f | sort
+    find "${fsoTestappPrivateRel}" -type f | sort
+    find "${nogApp2PrivateRel}" -type f | sort
+}
+
+initCa() {
+    cfssl gencert -initca "${confdir}/ca-csr.json" \
+    | cfssljson -bare ca
+}
+
+genCert() {
+    role="$1"
+    name="$2"
+
+    cfssl gencert \
+        -ca=ca.pem \
+        -ca-key=ca-key.pem \
+        -config="${confdir}/ca-config.json" \
+        -profile="${role}" \
+        "${confdir}/${name}.json" \
+    | cfssljson -bare ${name}
+
+    mkdir -p "${ssldir}/certs/${name}"
+    cp 'ca.pem' "${ssldir}/certs/${name}/ca.pem"
+    cat "${name}.pem" "${name}-key.pem" \
+        > "${ssldir}/certs/${name}/combined.pem"
+}
+
+main "$@"

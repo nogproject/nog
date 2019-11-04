@@ -1,0 +1,9 @@
+Template: nogfsorstd/user
+Type: string
+Default: ngfrst
+Description: Nogfsorstd user?
+
+Template: nogfsorstd/group
+Type: string
+Default: ngfsta
+Description: Nogfsorstd group?

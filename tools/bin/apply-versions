@@ -1,0 +1,64 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+scripts='
+git-fso
+nogfsosdwbakd3
+nogfsosdwgctd
+nogfsotard
+nogfsotargctd
+nogfsotarsecbakd
+nogfsotchd3
+'
+
+main() {
+    setupOs
+    updateScripts
+    updateLookToolGitFso
+}
+
+updateScripts() {
+    for s in ${scripts}; do
+        semver="$(grep "^${s}:" versions.yml | cut -d : -f 2 | tr -d ' ')"
+        path="backend/bin/${s}"
+        if grep -q "^semver='${semver}'" "${path}"; then
+            printf 'kept %s %s\n' ${path} ${semver}
+            continue
+        fi
+        sed -i "s/^semver=.*/semver='${semver}'/" "${path}"
+        printf 'updated %s %s\n' ${path} ${semver}
+    done
+}
+
+updateLookToolGitFso() {
+    semver="$(grep "^git-fso:" versions.yml | cut -d : -f 2 | tr -d ' ')"
+    path='backend/internal/nogfsostad/shadows/shadows.go'
+    if grep -q 'CheckText: "git-fso-'${semver}'"' "${path}"; then
+            printf 'kept %s LookTool git-fso-%s\n' ${path} ${semver}
+            return
+    fi
+    sed -i \
+        '/CheckText: "git-fso-/ s/git-fso-[^"]*/git-fso-'${semver}'/' \
+        "${path}"
+    printf 'updated %s LookTool git-fso-%s\n' ${path} ${semver}
+}
+
+setupOs() {
+    case $(uname) in
+    Darwin)
+        sed() { gsed "$@"; }
+        ;;
+    Linux)
+        ;;
+    *)
+        die 'unknown OS.'
+    esac
+}
+
+die() {
+    echo >&2 "fatal: $*"
+    exit 1
+}
+
+main "$@"

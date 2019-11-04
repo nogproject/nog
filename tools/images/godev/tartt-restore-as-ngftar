@@ -1,0 +1,30 @@
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+
+if [ $# -lt 3 ]; then
+    cat <<\EOF
+Usage:
+    tartt-restore-as-ngftar <restore> <repo> <tspath> [<members>...]
+
+`tartt-restore-as-ngftar` creates `/orgfs2/restore/<restore>` as root and then
+restores files into it by running `tartt -C <repo> restore <tspath>` as user
+`ngftar` using `tar` with capabilities.
+
+After the restore completed successfully, you should move it as root to its
+final destination.
+EOF
+    exit 1
+fi
+
+dest="/orgfs2/restore/$1"
+tarttDir="$2"
+tspath="$3"
+shift 3
+
+install -o ngftar -g root -m 0700 -d '/orgfs2/restore'
+mkdir -m 0755 "${dest}"
+
+chroot --userspec=ngftar / \
+env HOME=/home/ngftar \
+    PATH="/usr/local/lib/tartt-restore:${PATH}" \
+tartt -C "${tarttDir}" restore --dest="${dest}" "${tspath}" "$@"

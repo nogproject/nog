@@ -1,0 +1,21 @@
+{
+  "name": "nog-ready-jwts",
+  "version": "0.0.0",
+  "description": "Manage JWTs with predefined scopes.",
+  "main": "index-server.js",
+  "browser": "index-client.js",
+  "scripts": {
+    "lint": "\"$(git rev-parse --show-toplevel)\"/node_modules/.bin/eslint .",
+    "lint-fix": "meteor npm run lint -- --fix",
+    "test": "npm run test-headless",
+    "test-watch": "cd \"$(git rev-parse --show-toplevel)\"/web/apps/packages-testapp && npm run test-packages-watch-nog-ready-jwts",
+    "test-headless": "cd \"$(git rev-parse --show-toplevel)\"/web/apps/packages-testapp && npm run test-packages-headless-nog-ready-jwts"
+  },
+  "keywords": [
+    "Nog"
+  ],
+  "author": "Steffen Prohaska <prohaska@zib.de>",
+  "license": "MIT",
+  "//": "See toplevel package.json for ESLint dependencies",
+  "devDependencies": { }
+}

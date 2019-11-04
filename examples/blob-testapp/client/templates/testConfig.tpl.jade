@@ -1,0 +1,23 @@
+.row
+  .col-md-12
+    h4 Test options
+.row
+  .col-md-2
+    span user:
+      if currentUser
+        span.t-current-user-name #{currentUser.username}
+      else
+        span none
+  .col-md-8
+    button.btn.btn-default.login-user-button Login user
+    button.btn.btn-default.login-guest-button Login guest
+    button.btn.btn-default.logout-button Logout
+.row
+  .form-group
+    label(for=uploadSizeLimit) uploadSizeLimit
+    .row
+      .col-md-2
+        input.form-control.uploadSizeLimit-text(
+          type='text' id='uploadSizeLimit'
+        )
+        span.help-block 0 to disable

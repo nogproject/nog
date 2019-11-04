@@ -1,0 +1,21 @@
+{
+  "name": "nog-repo-toolbar",
+  "version": "0.0.1",
+  "description": "Top bar for repository views in Nog.",
+  "main": "index-client.js",
+  "scripts": {
+    "lint": "\"$(git rev-parse --show-toplevel)\"/node_modules/.bin/eslint .",
+    "lint-fix": "meteor npm run lint -- --fix"
+  },
+  "keywords": [
+    "Nog"
+  ],
+  "contributors": [
+    "Steffen Prohaska <prohaska@zib.de>",
+    "Ulrike Homberg <homberg@zib.de>"
+  ],
+  "license": "MIT",
+  "//": "See toplevel package.json for ESLint dependencies",
+  "devDependencies": {
+  }
+}

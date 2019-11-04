@@ -1,0 +1,4 @@
+Template: nogfsodomd/user
+Type: string
+Default: ngfdom
+Description: Nogfsodomd user and group?

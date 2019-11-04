@@ -1,0 +1,40 @@
+<template name='nogSearchInputForm'>
+  <div class="form-group">
+    <label>{{params.inputFormLabel}}</label>
+    <input class='form-control js-search-input nog-search-input' id='search'
+       type='text' value={{queryString}} autofocus>
+    {{> searchAutocomplete completion}}
+  </div>
+  {{#if displayInputWarnings.show}}
+    {{> searchWarnUnknownInput unknown=displayInputWarnings}}
+  {{/if}}
+</template>
+
+
+<template name='searchWarnUnknownInput'>
+  {{#each log in unknown.logs}}
+    <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+    {{log.text}}
+    <ul class="nog-comma-list">
+      {{#each item in log.items}}
+        <li>'{{item}}'</li>
+      {{/each}}
+    </ul>
+    <br>
+  {{/each}}
+</template>
+
+
+<template name="searchAutocomplete">
+  <div class="t-search-completion">
+    {{#if hasList}}
+      <div class="nog-search-autocomplete js-completion-list">
+        {{#each item in words}}
+          <div class="nog-completion-item js-completion-item" id={{item.id}}>
+            {{{item.renderString}}}
+          </div>
+        {{/each}}
+      </div>
+    {{/if}}
+  </div>
+</template>

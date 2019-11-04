@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+
+"""local nog organizer
+
+Usage:
+  nog2go cache [--history <num>] <repository>
+
+Options:
+  -h --help     Print help.
+
+  --history <num> number of last commits to be cached
+
+# Commands
+
+`no2go` organizes nog repositories locally
+
+`no2go cache` caches the entries and blobs of master branch of the specified
+repository to NOG_CACHE_PATH and creates a repository reference to the current
+working directory.
+
+"""
+
+from docopt import docopt
+import nog
+import os, sys
+import json
+
+LOCAL_NOG_PATH = os.getcwd()
+
+def main():
+    args = docopt(__doc__, version='nog2go 0.0.1')
+    opt_repo = args['<repository>']
+
+    if args['--history']:
+        try:
+            opt_num = int(args['--history'])
+            if ( opt_num < 1 ):
+                raise
+        except:
+            return print('nog2go: --history requires a number > 0')
+    else:
+        opt_num = 1
+
+
+    if args['cache']:
+        ws = nog.openRepo(opt_repo)
+        master = ws.getMaster()
+        createRepoRefFile(ws, master, opt_repo)
+
+        sha1s = getSha1s(ws, master, int(opt_num))
+        cacheRepo(ws, sha1s)
+
+        os.environ['NOG_API_URL']='http://localhost:8000'
+
+def createRepoRefFile(ws, master, repoName):
+    cfg = {'url': ws.url, 'master': master.sha1}
+    cfg_str = json.dumps(cfg)
+    cfg_dat = json.loads(cfg_str)
+    with open(LOCAL_NOG_PATH + '/'+ repoName.replace('/', ':') + '.json',
+              'w') as f:
+         json.dump(cfg_dat, f)
+    '''
+    json_str = json.dumps(master.content)
+    json_dat = json.loads(json_str)
+    with open(LOCAL_NOG_PATH + '/master.json', 'w') as f:
+         json.dump(json_dat, f)
+    '''
+
+def getSha1s(ws, master, history=1):
+
+    sha1s = []
+    ms = master
+    i = 0
+    while i < history:
+        sha1s.append(ms.sha1)
+        parent = ms.content['parents'][0]
+        ms = ws.getCommit(parent)
+        i += 1
+
+    return sha1s
+
+
+def cacheRepo(ws, sha1s):
+
+    for sha1 in sha1s:
+        commit = ws.getCommit(sha1)
+        root = commit.tree
+
+        traverse(ws, root)
+
+
+def traverse(ws, entry):
+
+    if entry.type == 'tree':
+        for e in entry.entries():
+            traverse(ws, e)
+    if entry.type == 'object' and not entry.blob == nog.NULL_SHA1:
+        try:
+            ws.prefetchBlob(entry.blob)
+        except:
+            pass
+
+
+
+main()

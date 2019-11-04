@@ -1,0 +1,155 @@
+template(name='repos')
+  .row
+    .col-md-12
+      h4 Repositories
+  .row
+    .col-md-12
+      .form-inline
+        a.t-new-repo.btn.btn-default.btn-sm(href='/new')
+          i.fa.fa-plus
+          | &nbsp; New Repository
+        unless displaysRecentRepos
+          with sortSelection
+            | &nbsp; &nbsp;
+            +reposSort
+          with filterText
+            | &nbsp; &nbsp;
+            +reposFilter
+  br
+  .row
+    .col-md-12
+      ul.nav.nav-tabs
+        li.t-tab-own(class='active')
+          a.js-toggle-tabs(href='#own' data-toggle='tab')
+            strong Own
+        li.t-tab-shared
+          a.js-toggle-tabs(href='#shared' data-toggle='tab')
+            strong Shared with me
+        li.t-tab-all
+          a.js-toggle-tabs(href='#all' data-toggle='tab')
+            strong All
+        li.t-tab-favorites
+          a.js-toggle-tabs(href='#favorites' data-toggle='tab')
+            strong Favorites
+        li.t-tab-recent
+          a.js-toggle-tabs(href='#recent' data-toggle='tab')
+            strong Recently visited
+      with displayOptions
+        .tab-content.t-repos
+          .tab-pane(id='own' class='active')
+            .row.t-repos-tab-own
+              .col-md-12
+                +ownReposList
+          .tab-pane(id='shared')
+            .row.t-repos-tab-shared
+              .col-md-12
+                +sharedReposList
+          .tab-pane(id='all')
+            .row.t-repos-tab-all
+              .col-md-12
+                +allReposList
+          .tab-pane(id='favorites')
+            .row.t-repos-tab-favorites
+              .col-md-12
+                +favoriteReposList
+          .tab-pane(id='recent')
+            .row.t-repos-tab-recent
+              .col-md-12
+                +recentReposList
+
+
+template(name='ownReposList')
+  br
+  with ownReposOpts
+    each selectedRepo
+      +reposItem
+    else
+      | None.
+
+
+template(name='sharedReposList')
+  br
+  with sharedReposOpts
+    each selectedRepo
+      +reposItem
+    else
+      | None.
+
+
+template(name='allReposList')
+  br
+  with allReposOpts
+    each selectedRepo
+      +reposItem
+    else
+      | None.
+
+
+template(name='favoriteReposList')
+  br
+  with favoriteReposOpts
+    each selectedRepo
+      +reposItem
+    else
+      .row
+        .col-md-12
+          | Click on the pin of a repo item to add it to your favorite
+          | list.
+
+
+template(name='recentReposList')
+  br
+  .row
+    .col-md-12
+      with recentReposOpts
+        with selectedRepo
+          each recentReposOrdered
+            +reposItem
+          else
+            .row
+              .col-md-12 None.
+      button.btn.btn-default.btn-block.nog-repo-list-item.js-reload-recent
+        i.fa.fa-refresh
+
+
+template(name='reposItem')
+  div.nog-repo-list-item
+    .row
+      .col-xs-1
+        img(src='#{icon}' height='40px')
+      .col-xs-11.nog-repo-list-item-space
+        .row
+          .col-xs-10.nog-list-item-name
+            if showFullName
+              if isWorkspace
+                a(href="/#{fullName}/workspace") #{fullName}
+              else if iskindCatalog
+                a(href="/#{fullName}/catalog") #{fullName}
+              else
+                a(href="/#{fullName}/files") #{fullName}
+            else
+              if isWorkspace
+                a(href="/#{fullName}/workspace") #{name}
+              else if iskindCatalog
+                a(href="/#{fullName}/catalog") #{name}
+              else
+                a(href="/#{fullName}/files") #{name}
+          .col-xs-2.text-right
+            with repoFavorites
+              +repoPin
+        .row
+          .col-xs-12.t-repo-update
+            | Updated: #{modified}
+
+
+template(name='reposFilter')
+  label Filter: &nbsp;
+  input.form-control.input-sm.js-filter-repos(type='text'
+    placeholder='Filter repos by name' value='#{text}')
+
+
+template(name='reposSort')
+  label Sort: &nbsp;
+  select.form-control.input-sm.js-select-sort(id='sort')
+    each sortOption
+      option(name='#{name}' selected='#{selected}') #{displayName}

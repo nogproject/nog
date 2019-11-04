@@ -1,0 +1,314 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+import "root-info.proto";
+import "job-control.proto";
+
+service SplitRoot {
+    rpc CreateSplitRootConfig(CreateSplitRootConfigI) returns (CreateSplitRootConfigO);
+    rpc GetSplitRootConfig(GetSplitRootConfigI) returns (GetSplitRootConfigO);
+    rpc UpdateSplitRootConfig(UpdateSplitRootConfigI) returns (UpdateSplitRootConfigO);
+    rpc DeleteSplitRootConfig(DeleteSplitRootConfigI) returns (DeleteSplitRootConfigO);
+
+    rpc CreateSplitRootPathFlag(CreateSplitRootPathFlagI) returns (CreateSplitRootPathFlagO);
+    rpc DeleteSplitRootPathFlag(DeleteSplitRootPathFlagI) returns (DeleteSplitRootPathFlagO);
+    rpc ListSplitRootPathFlags(ListSplitRootPathFlagsI) returns (ListSplitRootPathFlagsO);
+
+    rpc BeginSplitRoot(BeginSplitRootI) returns (BeginSplitRootO);
+
+    rpc AppendSplitRootDu(AppendSplitRootDuI) returns (AppendSplitRootDuO);
+    rpc CommitSplitRootDu(CommitSplitRootDuI) returns (CommitSplitRootDuO);
+    rpc AbortSplitRootDu(AbortSplitRootDuI) returns (AbortSplitRootDuO);
+
+    rpc AppendSplitRootSuggestions(AppendSplitRootSuggestionsI) returns (AppendSplitRootSuggestionsO);
+    rpc CommitSplitRootAnalysis(CommitSplitRootAnalysisI) returns (CommitSplitRootAnalysisO);
+    rpc AbortSplitRootAnalysis(AbortSplitRootAnalysisI) returns (AbortSplitRootAnalysisO);
+
+    rpc AppendSplitRootDecisions(AppendSplitRootDecisionsI) returns (AppendSplitRootDecisionsO);
+
+    rpc CommitSplitRoot(CommitSplitRootI) returns (CommitSplitRootO);
+    rpc AbortSplitRoot(AbortSplitRootI) returns (AbortSplitRootO);
+
+    rpc GetSplitRoot(GetSplitRootI) returns (GetSplitRootO);
+}
+
+message SplitRootConfig {
+    reserved 1; // Potential future header.
+    string global_root = 2;
+    bool enabled = 3;
+    int32 max_depth = 4;
+    int64 min_disk_usage = 5;
+    int64 max_disk_usage = 6;
+}
+
+message CreateSplitRootConfigI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    SplitRootConfig config = 4;
+}
+
+message CreateSplitRootConfigO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+    SplitRootConfig config = 3;
+}
+
+message GetSplitRootConfigI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    string global_root = 3;
+}
+
+message GetSplitRootConfigO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+    SplitRootConfig config = 3;
+}
+
+message UpdateSplitRootConfigI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    SplitRootConfig config = 4;
+}
+
+message UpdateSplitRootConfigO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+    SplitRootConfig config = 3;
+}
+
+message DeleteSplitRootConfigI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    string global_root = 4;
+}
+
+message DeleteSplitRootConfigO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message CreateSplitRootPathFlagI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    string global_root = 4;
+    string relative_path = 5;
+    // Bitwise or of `FsoPathFlag.Flag` values.
+    uint32 flags = 6;
+}
+
+message CreateSplitRootPathFlagO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message DeleteSplitRootPathFlagI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    string global_root = 4;
+    string relative_path = 5;
+    // Bitwise or of `FsoPathFlag.Flag` values.
+    uint32 flags = 7;
+}
+
+message DeleteSplitRootPathFlagO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message ListSplitRootPathFlagsI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    string global_root = 4;
+}
+
+message ListSplitRootPathFlagsO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+    repeated FsoPathFlag paths = 3;
+}
+
+message BeginSplitRootI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    string global_root = 4;
+    bytes workflow = 5;
+}
+
+message BeginSplitRootO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+    bytes workflow_index_vid = 3;
+    bytes workflow_vid = 4;
+}
+
+message AppendSplitRootDuI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    repeated PathDiskUsage paths = 4;
+}
+
+message AppendSplitRootDuO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message CommitSplitRootDuI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message CommitSplitRootDuO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message AbortSplitRootDuI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    int32 status_code = 4;
+    string status_message = 5;
+}
+
+message AbortSplitRootDuO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message AppendSplitRootSuggestionsI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    repeated FsoSplitRootSuggestion paths = 4;
+}
+
+message AppendSplitRootSuggestionsO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message CommitSplitRootAnalysisI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message CommitSplitRootAnalysisO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message AbortSplitRootAnalysisI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    int32 status_code = 4;
+    string status_message = 5;
+}
+
+message AbortSplitRootAnalysisO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message AppendSplitRootDecisionsI {
+    enum Decision {
+        D_UNSPECIFIED = 0;
+        D_CREATE_REPO = 1;
+        D_NEVER_SPLIT = 2;
+        D_IGNORE_ONCE = 3;
+    }
+
+    message PathDecision {
+        reserved 1; // Potential future header.
+        string path = 2;
+        Decision decision = 3;
+    }
+
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    bytes registry_vid = 4;
+    repeated PathDecision paths = 5;
+    string creator_name = 6;
+    string creator_email = 7;
+}
+
+message AppendSplitRootDecisionsO {
+    message Effect {
+        reserved 1; // Potential future header.
+        string path = 2;
+        bytes repo_id = 3;
+        bytes registry_vid = 4;
+        bytes workflow_vid = 5;
+    }
+
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 3;
+    bytes registry_vid = 4;
+    repeated Effect effects = 5;
+}
+
+message CommitSplitRootI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message CommitSplitRootO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+    bytes workflow_index_vid = 3;
+}
+
+message AbortSplitRootI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    int32 status_code = 4;
+    string status_message = 5;
+}
+
+message AbortSplitRootO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+    bytes workflow_index_vid = 3;
+}
+
+message GetSplitRootI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    JobControl job_control = 3;
+}
+
+message GetSplitRootO {
+    enum StatusCode {
+        SC_OK = 0;
+        SC_RUNNING = 100;
+        SC_ANALYSIS_COMPLETED = 101;
+        SC_FAILED = 102;
+        SC_COMPLETED = 103;
+        SC_EXPIRED = 104;
+    }
+
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+    int32 status_code = 3;
+    string status_message = 4;
+    string global_root = 5;
+    repeated FsoSplitRootSuggestion suggestions = 6;
+    repeated FsoSplitRootDecision decisions = 7;
+    repeated PathDiskUsage du = 8;
+}

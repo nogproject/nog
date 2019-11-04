@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+
+from copy import copy, deepcopy
+from datetime import datetime
+import json
+import nog
+import os
+import random
+import string
+
+dataRepo = 'fake2_celltracking-timeseries_2015'
+programsRepo = 'fake2_programs_2015'
+workspaceRepo = 'fake2_celltracking-workspace_2015'
+programName = 'celltracking'
+
+
+def main():
+    dataRegistry = nog.openRepo(dataRepo)
+    dataRegistryMaster = dataRegistry.getMaster()
+    programsRegistry = nog.openRepo(programsRepo)
+    programsRegistryMaster = programsRegistry.getMaster()
+    (workspace, master) = ensureWorkspaceRepo(workspaceRepo)
+    root = master.tree
+
+    if True:  # Can be disabled to avoid resetting the tree.
+        root = emptyWorkspaceRootTree()
+
+    try:
+        datalist = next(root.trees('datalist'))
+    except StopIteration:
+        datalist = cloneWithOrigin(dataRegistry, dataRegistryMaster, 'datalist')
+        root.append(datalist)
+        master = workspace.commitTree(
+                subject='Add datalist', tree=root, parent=master.sha1
+            )
+        print(master.sha1, stringify_pretty(master.content))
+
+    try:
+        log = next(root.trees('log'))
+    except StopIteration:
+        log = nog.Tree()
+        root.append(log)
+        log.name = 'log'
+        log.meta['log'] = {}
+        addLogEntry(
+                log, auto=True,
+                description='Start log entry',
+                content='Automatically created log when creating workspace.'
+            )
+        master = workspace.commitTree(
+                subject='Add log', tree=root, parent=master.sha1
+            )
+        print(master.sha1, stringify_pretty(master.content))
+
+    try:
+        programs = next(root.trees('programs'))
+    except StopIteration:
+        programs = emptyProgramsRootTree()
+        root.append(programs)
+        master = workspace.commitTree(
+                subject='Add programs tree', tree=root, parent=master.sha1
+            )
+        print(master.sha1, stringify_pretty(master.content))
+
+    rPrograms = next(programsRegistryMaster.tree.trees('programs'))
+    rPrograms = versionsHead(rPrograms)
+    print('rPrograms', rPrograms.sha1, stringify_pretty(rPrograms.content))
+    rPrg = next(rPrograms.trees(programName))
+    rPrg = versionsHead(rPrg)
+    print('rPrg', rPrg.sha1, stringify_pretty(rPrg.content))
+    rPrgCurrent = next(rPrg.entries())
+    print('rPrgCurrent', rPrgCurrent.sha1,
+          stringify_pretty(rPrgCurrent.content))
+    try:
+        lPrg = next(programs.trees(programName))
+    except StopIteration:
+        lPrg = nog.Tree()
+        lPrg.name = programName
+        desc = 'Workspace version of celltracking'
+        lPrg.meta['description'] = desc
+        lPrg.meta['package'] = {
+            'name': workspace.fullName + '/' + programName,
+            'description': desc,
+            'authors': [{'name': 'Steffen Prohaska'}]
+        }
+        programs.insert(0, lPrg)
+
+    try:
+        lPrgCurrent = next(lPrg.entries())
+    except StopIteration:
+        lPrgCurrent = nog.Tree()
+        datetag = datetime.utcnow().strftime('%Y-%m-%dT%H%M%SZ')
+        lPrgCurrent.name = 'celltracking@' + datetag
+        lPrgCurrent.meta['description'] = lPrg.meta['description']
+        lPrgCurrent.meta['package'] = copy(lPrg.meta['package'])
+        lPrgCurrent.meta['package'].update({
+            'version': {'date': datetag},
+            'dependencies': [
+                {
+                    'name': programName,
+                    'repoFullName': programsRegistry.fullName,
+                }
+            ],
+            'frozen': [
+                _extend(copy(rPrgCurrent.meta['package']['version']), {
+                    'name': rPrgCurrent.meta['package']['name'],
+                    'sha1': rPrgCurrent.sha1
+                })
+            ]
+        })
+        lPrgCurrent.meta['program'] = {}
+        lPrgCurrent.append(rPrgCurrent)
+        params = nog.Object()
+        params.name = 'params'
+        params.meta['program'] = {'params': {'foo': 'bar'}}
+        lPrgCurrent.append(params)
+        lPrg.insert(0, lPrgCurrent)
+        master = workspace.commitTree(
+                subject='Add local celltracking program',
+                tree=root, parent=master.sha1
+            )
+        print(master.sha1, stringify_pretty(master.content))
+
+    try:
+        log = next(root.trees('log'))
+        addLogEntry(
+                log, auto=True,
+                description='Added celltracking program',
+                content='Added celltracking program to workspace.'
+            )
+    except StopIteration:
+        pass
+
+    master = workspace.commitTree(
+            subject='Complete workspace update',
+            tree=root, parent=master.sha1
+        )
+    print(master.sha1, stringify_pretty(master.content))
+
+
+def addLogEntry(log, description, content, auto=None):
+    auto = auto or True
+    if auto:
+        creation = 'automatic'
+    else:
+        creation = 'human'
+    date = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+    entry = nog.Object()
+    entry.name = date + '.md'
+    entry.meta['logentry'] = {
+        'date': date,
+        'creation': creation
+    }
+    entry.meta['description'] = description
+    entry.meta['content'] = content
+    log.insert(0, entry)
+
+
+# Copy entry with origin information as versions entry.
+def cloneWithOrigin(srcRepo, srcCommit, pathspec):
+    def resolve(commit, pathspec):
+        path = []
+        pathspec = pathspec.split('/')
+        initial, last = pathspec[:-1], pathspec[-1]
+        tree = commit.tree
+        for p in initial:
+            tree = next(tree.trees(p))
+            path.append(tree.name)
+        ent = next(tree.entries(last))
+        path.append(ent.name)
+        return (ent, '/'.join(path))
+    ent, path = resolve(srcCommit, pathspec)
+    clone = nog.Tree()
+    clone.name = ent.name
+    clone.meta['versions'] = {
+        'remotes': [
+            {
+                'repoFullName': srcRepo.fullName,
+                'namePath': path,
+                'refName': 'branches/master',
+                'commitId': srcCommit.sha1,
+                'sha1': ent.sha1
+            }
+        ]
+    }
+    ent = deepcopy(ent)
+    clone.append(ent)
+    return clone
+
+
+def _extend(d, d2):
+    d.update(d2)
+    return d
+
+
+# Either create a repo with datalist root tree; or check that the existing repo
+# has a datalist root tree.
+def ensureWorkspaceRepo(repo):
+    try:
+        remote = nog.openRepo(repo)
+        master = remote.getMaster()
+    except RuntimeError as err:
+        if 'ERR_REPO_MISSING' not in str(err):
+            raise
+        remote = nog.createRepo(repo)
+        master = remote.getMaster()
+        root = emptyWorkspaceRootTree()
+        master = remote.commitTree(
+                subject='Create workspace', tree=root, parent=master.sha1)
+
+    root = master.tree
+    if 'workspace' not in root.meta:
+        raise RuntimeError('Root tree without `meta.workspace`.')
+    return (remote, master)
+
+
+def emptyWorkspaceRootTree():
+    root = nog.Tree()
+    root.name = 'Chemotaxis workspace'
+    root.meta['workspace'] = {}
+    return root
+
+
+def emptyProgramsRootTree():
+    root = nog.Tree()
+    root.name = 'programs'
+    root.meta['programs'] = {}
+    return root
+
+
+def versionsHead(entry):
+    if 'versions' in entry.meta:
+        return next(entry.entries())
+    else:
+        return entry
+
+
+def stringify_pretty(d):
+    return json.dumps(d, sort_keys=True, ensure_ascii=False, indent=2) + '\n'
+
+
+main()

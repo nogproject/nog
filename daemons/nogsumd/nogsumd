@@ -1,0 +1,882 @@
+#!/usr/bin/python3 -u
+
+"""\
+Usage:
+  nogsumd
+
+`nogsumd` verifies S3 ETags for blob locations and verifies that the SHA1
+matches the blob id.  It also computes a SHA256 and stores it on the blob.
+
+`nogsumd` is usually run together with `nogreplicad`.
+
+`nogsumd` is configured via NOGSUMD_CONF, similar to `nogreplicad`.  See
+details there and configuration example further below.
+
+ETags are verified for all blob `locs`, reading data, however, only from
+`readBuckets`, which can be used to verify AWS S3 ETags based on data stored in
+a local Ceph S3 bucket without data transfer from AWS.  `nogsumd` will try to
+guess multi-part parameters that were used for uploading if `nogreplicad`
+initialized a location with `mpp=auto`.
+
+`nogsumd` waits for replica locs to become available that point to read buckets
+before it starts any verification, which can be used to configure a
+`nogreplicad` that transfers data from S3 to a local bucket, so that data is
+downloaded from AWS only once.  `nogsumd` will wait for the local replica.  It
+will not read the data directly from AWS S3 if the AWS S3 bucket is not listed
+in `readBuckets`.
+
+`nogsumd` maintains information in blobs as illustrated below:
+
+```
+blob = {
+    "_id": ...,
+    "mtime": ...,
+    "sha1": ...,
+    "sha256": ...,
+    "verified": {
+        "ts": <timestamp>,
+        "rule" "chksum-<semver>"
+    },
+    "locs": [
+        {
+            "bucket": "nog",
+            "status": "online",
+            "verified": {
+                "ts": <timestamp>,
+                "rule" "chksum-<semver>"
+            },
+            "mpp": {
+                "n": << number of S3 multi parts; 0 if simple put >>,
+                "psize": << multi-part size if n > 0 >>
+            },
+            ...
+        },
+    ],
+    "log": [
+        {
+            "ts": <timestamp>,
+            "rule" "chksum-<semver>",
+            "msg": << more human-friendly message >>
+        },
+    ],
+    "errors": [
+        { "ts": ..., "msg": ..., "rule": ... }
+    ],
+    "locks": [
+        { "ts": ..., "holder": ..., "op": "chketag", "bucket": ... },
+        { "ts": ..., "holder": ..., "op": "chksum" },
+        ...
+    ]
+}
+```
+
+`blob.verified` is a confirmation that the sha1 matched the id.
+`blob.locs.verified` is a confirmation that the ETag matched.
+
+Validation failures are collected in `errors`.  Blobs with `errors` are
+ignored.  To clear errors, the field `errors` must be completely removed.
+Blobs with an empty array `errors` are still considered to be in error state.
+
+Active checksum operations have an entry in `locks` to guard agains concurrent
+operations.
+
+Example configuration with variants:
+
+```
+{
+    "daemonId": "nogsumd.1",
+
+    "loglevel": "INFO",
+
+    "vaultAddr": << see nogreplicad >>
+    "vaultCacert": << see nogreplicad >>
+
+    "resetCutoff": << see nogreplicad >>
+
+    "nogMongoUrl": << see nogreplicad >>
+    "nogMongoCa": << see nogreplicad >>
+    "nogMongoCert": << see nogreplicad >>
+
+    "readBuckets": ["nog2", "nog3"],
+
+    "buckets": [
+        { << see nogreplicad >> },
+        { ... },
+    ]
+}
+```
+
+The configuration is similar to `nogreplicad`.  The major difference are the
+`readBuckets`.
+
+Concurrent daemons should each have a unique `daemonId` to ensure that the
+mtime cutoff is correctly tracked.  The default daemon id is
+`nogsumd.<hostname>`.
+"""
+
+from boto3.s3.transfer import TransferConfig
+from copy import copy, deepcopy
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from math import ceil
+from nogd import DocLock, LOCK_EXPIRE_TIMEDELTA, BlobStateError
+from nogd import ensureMtime
+from nogd import installSigTermHandler, SigTerm, configureLogging
+from nogd import newMongoBucketContext
+from nogd import nogdBlobsProcessedTotal, nogdBlobsReadBytesTotal
+from nogd import nogdStaleLocksExpiredTotal
+from nogd import startMetricsServer
+from nogd import updateConfFromEnv, newMongoBucketsCfgVault, copyWithoutSecrets
+from nogd import newMongoClient
+from os import environ
+from pymongo.errors import DuplicateKeyError
+from socket import gethostname
+from threading import Thread
+from time import sleep, time
+import hashlib
+import json
+import logging
+import nogd
+import prometheus_client as prom
+import semver
+
+logger = logging.getLogger('nogsumd')
+
+LOCK_OP_CHKETAG = 'chketag'
+LOCK_OP_CHKSUM = 'chksum'
+
+RULE_NAME = 'chksum'
+RULE_VERSION = '0.3.0'
+RULE_VERSION_MIN = '0.3.0'
+RULE = '{}-{}'.format(RULE_NAME, RULE_VERSION)
+
+UNIX_EPOCH = datetime.fromtimestamp(0)
+
+defaultCfg = {
+    'daemonId': 'nogsumd.{}'.format(gethostname()),
+    'vaultAddr': 'https://vault.service.consul:8200',
+    'vaultCacert': '/vault/etc/ca.crt.pem',
+    'nogMongoUrl': environ.get(
+        'NOG_MONGO_URL', 'mongodb://nogmongo.service.consul/nog'
+    ),
+}
+
+nogdStaleLocksExpiredTotal.labels(op=LOCK_OP_CHKETAG).inc(0)
+nogdStaleLocksExpiredTotal.labels(op=LOCK_OP_CHKSUM).inc(0)
+
+nogdBlobErrorsTotal = prom.Counter(
+    'nogd_blob_errors_total',
+    'Total number of blob errors.',
+    ['error'],
+)
+nogdBlobErrorsTotal.labels(error='sha').inc(0)
+nogdBlobErrorsTotal.labels(error='etag').inc(0)
+
+nogdShasVerifiedTotal = prom.Counter(
+    'nogd_shas_verified_total',
+    'Total number of blobs for which shas were computed.',
+)
+
+nogdEtagsVerifiedTotal = prom.Counter(
+    'nogd_etags_verified_total',
+    'Total number of blob ETags that were computed.',
+)
+
+
+def stringify_pretty(d):
+    return json.dumps(d, sort_keys=True, ensure_ascii=False, indent=2) + '\n'
+
+
+def stringify_line(d):
+    return json.dumps(d, sort_keys=True, ensure_ascii=False)
+
+
+def startStatusServer(vault, port=8080, addr=''):
+    """`startStatusServer()` runs a minimal status HTTP endpoint.
+
+    Any path on the server responds the status, although `GET /status` should
+    be used.
+
+    See also `nogreplicad`.  We should consider refactoring.
+
+    We should consider replacing the status server or simplifying it even
+    further and instead provide Prometheus metrics endpoint.  Useful metrics
+    could be the number of blobs processed, data transferred, ... .
+
+    """
+    def check():
+        summary = { 'status': 'ok' }
+        cfg = vault.cfg
+        try:
+            cl = newMongoClient(cfg)
+            db = cl.get_default_database()
+            db.blobs.find_one()
+            summary['nogmongo'] = 'ok'
+        except Exception as e:
+            summary['status'] = 'fail'
+            summary['nogmongo'] = str(e)
+        return summary
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            summary = check()
+            if summary['status'] == 'ok':
+                self.send_response(200)
+            else:
+                self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(stringify_pretty(summary).encode('utf-8'))
+
+        def log_message(self, format, *args):
+            return
+
+    def run():
+        httpd = HTTPServer((addr, port), Handler)
+        httpd.serve_forever()
+
+    t = Thread(name='StatusServer', target=run, daemon=True)
+    t.start()
+    logger.info('Status server listening on {}:{}'.format(addr, port))
+
+
+def newCfgVault():
+    cfg = deepcopy(defaultCfg)
+    updateConfFromEnv(cfg, 'NOGSUMD_CONF')
+    configureLogging(cfg)
+    logger.info('config: {}'.format(stringify_line(copyWithoutSecrets(cfg))))
+    return newMongoBucketsCfgVault(cfg)
+
+
+def newContext(vault):
+    return newMongoBucketContext(vault, required=['readBuckets'])
+
+
+def verifiedGteMinSemver(obj):
+    """`verifiedGteMinSemver()` checks the verified ruled version.
+
+    It returns `True` if the semver rule version in `obj[verified]` is greater
+    or equal the minimal required rule version.
+
+    """
+    verified = obj.get('verified', None)
+    if not verified:
+        return False
+    rule = verified.get('rule', None)
+    if not rule:
+        return False
+    v = rule.split('-', 1)[1]
+    return semver.match(v, '>={}'.format(RULE_VERSION_MIN))
+
+
+def chksumRuleIsSatisfied(blob):
+    return (
+        ('sha1' in blob) and
+        ('sha256' in blob) and
+        verifiedGteMinSemver(blob) and
+        all(verifiedGteMinSemver(loc) for loc in blob.get('locs', []))
+    )
+
+
+def availableBuckets(blob):
+    return set(
+        loc['bucket']
+        for loc in blob['locs']
+        if 'bucket' in loc and loc['status'] == 'online'
+    )
+
+
+def findReadBucket(blob, ctx):
+    avail = availableBuckets(blob)
+    for bkt in ctx.readBuckets:
+        if bkt in avail:
+            return bkt
+    return None
+
+
+def verifyEtag(blob, s3Etag, loc, readBucket, ctx, lock):
+    """`verifyEtag()` computes S3 ETags, renewing the `lock`.
+
+    `verifyEtag()` requires multi-part params in `loc['mpp']`.  See
+    <https://www.savjee.be/2015/10/Verifying-Amazon-S3-multi-part-uploads-with-ETag-hash/>
+    for the S3 ETag multipart algorithm and
+    <https://gist.github.com/emersonf/7413337> for a Bash implementation.
+
+    The return value is `msg, err`.  If the verification succeeded, `msg`
+    contains an explanation and `err` is `None`.  If the verification failed,
+    `err` contains an explanation.
+
+    """
+    bid = blob['_id']
+    s3Read = ctx.s3Clients[readBucket]
+    bucket = loc['bucket']
+
+    # n == 0: single-part upload, simply compute the MD5.
+    # n >= 1: multi-part upload, apply S3 ETag algorithm.
+
+    def md5OfBody(body):
+        chunkSize = 2 ** 16
+        md5 = hashlib.md5()
+        while True:
+            buf = body.read(chunkSize)
+            if not buf:
+                break
+            md5.update(buf)
+            lock.renewLock()
+        return md5
+
+    nParts = int(loc['mpp']['n'])
+    if nParts == 0:
+        if '-' in s3Etag:
+            msg = None
+            err = (
+                'Blob {}/{} ETag mismatch; expected single-part ETag, '
+                's3 returned {}.'
+            )
+            err = err.format(bucket, bid, s3Etag)
+            return msg, err
+
+        body = s3Read.get_object(Bucket=readBucket, Key=bid)['Body']
+        etag = md5OfBody(body).hexdigest()
+    else:
+        if '-' not in s3Etag:
+            msg = None
+            err = (
+                'Blob {}/{} ETag mismatch; expected multi-part ETag, '
+                's3 returned {}.'
+            )
+            err = err.format(bucket, bid, s3Etag)
+            return msg, err
+
+        etagNParts = int(s3Etag.split('-')[1])
+        if nParts != etagNParts:
+            msg = None
+            s = 's'
+            if etagNParts == 1:
+                s = ''
+            err = (
+                'Blob {}/{} ETag mismatch; expected {} part{}, '
+                's3 returned {}.'
+            )
+            err = err.format(bucket, bid, etagNParts, s, s3Etag)
+            return msg, err
+
+        partSize = int(loc['mpp']['psize'])
+        etag = hashlib.md5()
+        for i in range(nParts):
+            start = i * partSize
+            if i == nParts - 1:
+                httpRange = 'bytes={}-'.format(start)
+            else:
+                httpRange = 'bytes={}-{}'.format(start, start + partSize - 1)
+            body = s3Read.get_object(
+                Bucket=readBucket, Key=bid, Range=httpRange
+            )['Body']
+            etag.update(md5OfBody(body).digest())
+        etag = '{}-{}'.format(etag.hexdigest(), nParts)
+
+    if etag == s3Etag:
+        msg = 'Blob {}/{} ETag {} ok.'.format(bucket, bid, etag)
+        err = None
+    else:
+        msg = None
+        err = 'Blob {}/{} ETag mismatch; expected {}, s3 returned {}.'
+        err = err.format(bucket, bid, etag, s3Etag)
+
+    return msg, err
+
+
+# The following heuristics are used to determine multi-part parameters for
+# existing blobs:
+#
+# - `nog`: `mppNog()` must be the same algorithm as `partParamsForSize()` in
+#   `packages/nog-blob`.
+#
+# - `boto3`: the defaults from `boto3.s3.transfer.TransferConfig`, see
+#   <http://boto3.readthedocs.io/en/latest/reference/customizations/s3.html#boto3.s3.transfer.TransferConfig>.
+#
+# The heuristics could be dropped when all Nog MongoDBs have been upgraded and
+# all code is aware of `loc.mpp` .
+
+def mppNog(size):
+    MB = 1024 * 1024
+    minPartSize = 5 * MB
+    maxNParts = 10000
+    usualMaxPartSize = 100 * MB
+    usualNParts = 10
+    maxSize = maxNParts * 5 * 1000 * MB
+
+    if size > maxSize:
+        raise ValueError('Size too large.')
+
+    partSize = ceil(size / usualNParts)
+    if partSize < minPartSize:
+        partSize = minPartSize
+    elif partSize > usualMaxPartSize:
+        partSize = usualMaxPartSize
+
+    if partSize > size:
+        partSize = size
+
+    # S3 requires at least one part, even if it has size 0.
+
+    if partSize > 0:
+        nParts = ceil(size / partSize)
+    else:
+        nParts = 1
+
+    if nParts > maxNParts:
+        partSize = ceil(size / maxNParts)
+        nParts = ceil(size / partSize)
+
+    return { 'n': nParts, 'psize': partSize }
+
+
+def mppBoto3(size):
+    tc = TransferConfig()
+    if size <= tc.multipart_threshold:
+        return { 'n': 0 }
+    else:
+        partSize = tc.multipart_chunksize
+        # No need to handle size 0 case, since size > 0 => n >= 1.
+        nParts = (size + partSize - 1) // partSize
+        return { 'n': nParts, 'psize': partSize }
+
+
+def verifyEtagAutoMpp(blob, s3Etag, loc, readBucket, ctx, lock):
+    errs = []
+    size = blob['size']
+    for mppFn in [mppBoto3, mppNog]:
+        l = copy(loc)
+        mpp = mppFn(size)
+        l['mpp'] = mpp
+        msg, err = verifyEtag(
+            blob, s3Etag=s3Etag, loc=l, readBucket=readBucket, ctx=ctx,
+            lock=lock
+        )
+        if err:
+            errs.append(err)
+        else:
+            errs = []
+            break
+    if len(errs):
+        msg = None
+        mpp = None
+        err = 'Failed to auto-detect multi-part params: ' + ' '.join(errs)
+    else:
+        err = None
+    return msg, err, mpp
+
+
+def ensureLocVerified(blob, loc, readBucket, ctx):
+    """`ensureLocVerified()` verifies ETags if necessary.
+
+    """
+    if verifiedGteMinSemver(loc):
+        return
+
+    bid = blob['_id']
+    bucket = loc['bucket']
+
+    lock = DocLock(
+        collection=ctx.db.blobs, docid=bid, holder=ctx.daemonId,
+        core={ 'op': LOCK_OP_CHKETAG, 'bucket': bucket },
+    )
+    if not lock.tryLock():
+        msg = 'Skipped verify ETag {}/{} due to conflicting lock.'
+        logger.info(msg.format(bucket, bid))
+        return
+
+    # `loc` is from a scanning cursor and may be outdated if another `nogsumd`
+    # has updated `verified` in the meantime.  Reread blob and check again
+    # before starting the potentially expensive checksum operation.
+
+    blob = ctx.db.blobs.find_one({ '_id': bid })
+    if not blob:
+        raise BlobStateError('Missing blob {}.'.format(bid))
+    try:
+        loc = next(l for l in blob['locs'] if l['bucket'] == bucket)
+    except StopIteration:
+        msg = 'Missing blob location {}/{}.'
+        raise BlobStateError(msg.format(bucket, bid))
+    if verifiedGteMinSemver(loc):
+        msg = 'Skipped verify ETag {}/{} during recheck.'
+        logger.info(msg.format(bucket, bid))
+        lock.unlock()
+        return
+
+    s3 = ctx.s3Clients[bucket]
+    res = s3.head_object(Bucket=bucket, Key=bid)
+    s3Etag = res['ResponseMetadata']['HTTPHeaders']['etag'].replace('"', '')
+
+    if loc['mpp'] == 'auto':
+        msg, err, mpp = verifyEtagAutoMpp(
+            blob, s3Etag=s3Etag, loc=loc, readBucket=readBucket, ctx=ctx,
+            lock=lock
+        )
+    else:
+        mpp = None
+        msg, err = verifyEtag(
+            blob, s3Etag=s3Etag, loc=loc, readBucket=readBucket, ctx=ctx,
+            lock=lock
+        )
+
+    nogdEtagsVerifiedTotal.inc()
+    nogdBlobsReadBytesTotal.labels(
+        purpose='etag', bucket=readBucket,
+    ).inc(blob['size'])
+
+    if err:
+        logger.error(err)
+        pmsg = (
+            'Daemon {} rule {} verification failed: {}.'
+        ).format(ctx.daemonId, RULE, err)
+        pushBlobError(blob, pmsg, 'etag', ctx)
+        lock.unlock()
+        return err
+
+    logger.info(msg)
+    verified = { 'ts': datetime.utcnow(), 'rule': RULE }
+    setKwargs = { 'locs.$.verified': verified }
+    if mpp:
+        setKwargs['locs.$.mpp'] = mpp
+    ur = ctx.db.blobs.update_one(
+        { '_id': bid, 'locs.bucket': loc['bucket'] },
+        {
+            '$set': setKwargs,
+            '$currentDate': { 'mtime': True },
+        }
+    )
+    if ur.matched_count != 1:
+        bucket = loc['bucket']
+        msg = 'Failed to store loc {}/{} ETag ok.'.format(bucket, bid)
+        logger.error(msg)
+    if mpp:
+        msg = 'Stored auto-detected mpp {} for loc {}/{}'
+        logger.info(msg.format(mpp, bucket, bid))
+
+    lock.unlock()
+    return
+
+
+def pushBlobError(blob, msg, label, ctx):
+    nogdBlobErrorsTotal.labels(error=label).inc()
+    bid = blob['_id']
+    error = { 'ts': datetime.utcnow(), 'msg': msg, 'rule': RULE }
+    ur = ctx.db.blobs.update_one(
+        { '_id': bid },
+        {
+            '$push': { 'errors': error },
+            '$currentDate': { 'mtime': True },
+        },
+    )
+    if ur.matched_count != 1:
+        logger.error('Failed to push error onto blob {}.'.format(bid))
+
+
+def ensureShaVerified(blob, readBucket, ctx):
+    """`ensureShaVerified()` computes sha1 and sha256.
+
+    """
+    if verifiedGteMinSemver(blob):
+        return
+
+    bid = blob['_id']
+    s3 = ctx.s3Clients[readBucket]
+
+    lock = DocLock(
+        collection=ctx.db.blobs, docid=bid, holder=ctx.daemonId,
+        core={ 'op': LOCK_OP_CHKSUM },
+    )
+    if not lock.tryLock():
+        msg = 'Skipped verify checksum {} due to conflicting lock.'
+        logger.info(msg.format(bid))
+        return
+
+    # `blob` is from a scanning cursor and may be outdated if another `nogsumd`
+    # has updated `verified` in the meantime.  Reread blob and check again
+    # before starting the potentially expensive checksum operation.
+
+    blob = ctx.db.blobs.find_one({ '_id': bid })
+    if not blob:
+        raise BlobStateError('Missing blob {}.'.format(bid))
+    if verifiedGteMinSemver(blob):
+        msg = 'Skipped verify checksums {} during recheck.'
+        logger.info(msg.format(bid))
+        lock.unlock()
+        return
+
+    chunkSize = 2 ** 16
+    body = s3.get_object(Bucket=readBucket, Key=bid)['Body']
+
+    sha1 = hashlib.sha1()
+    sha256 = hashlib.sha256()
+    while True:
+        buf = body.read(chunkSize)
+        if not buf:
+            break
+        sha1.update(buf)
+        sha256.update(buf)
+        lock.renewLock()
+    sha1 = sha1.hexdigest()
+    sha256 = sha256.hexdigest()
+
+    nogdShasVerifiedTotal.inc()
+    nogdBlobsReadBytesTotal.labels(
+        purpose='sha', bucket=readBucket,
+    ).inc(blob['size'])
+
+    if bid != sha1:
+        err = 'Blob {} sha1 mismatch; computed {}, blob id is {}.'
+        err = err.format(bid, sha1, bid)
+        logger.error(err)
+        pmsg = 'Daemon {} rule {} verification failed: {}'
+        pmsg = pmsg.format(ctx.daemonId, RULE, err)
+        pushBlobError(blob, pmsg, 'sha', ctx)
+        lock.unlock()
+        return err
+
+    logger.info('Blob {} sha1 ok.'.format(bid))
+    ts = datetime.utcnow()
+    verified = { 'ts': ts, 'rule': RULE }
+    logent = {
+        'ts': ts,
+        'rule': RULE,
+        'msg': 'Daemon {} verified rule {}.'.format(ctx.daemonId, RULE),
+    }
+    ur = ctx.db.blobs.update_one(
+        { '_id': bid },
+        {
+            '$set': {
+                'sha1': sha1,
+                'sha256': sha256,
+                'verified': verified,
+            },
+            '$push': { 'log': logent },
+            '$currentDate': { 'mtime': True },
+        },
+    )
+    if ur.matched_count != 1:
+        logger.error('Failed to store verification result.'.format(bid))
+
+    lock.unlock()
+    return
+
+
+def processBlob(blob, ctx):
+    """`processBlob()` fully processes the blob.
+
+    """
+    ensureMtime(blob, ctx)
+
+    bid = blob['_id']
+
+    if 'errors' in blob:
+        logger.warning('Skipped Blob {} with errors.'.format(bid))
+        return
+
+    if blob['status'] != 'available':
+        logger.info('Skipped Blob {} with `status != available`.'.format(bid))
+        return
+
+    if chksumRuleIsSatisfied(blob):
+        msg = 'Blob {} already satisfies rule {}-x.y.z >= {}.'
+        logger.info(msg.format(bid, RULE_NAME, RULE_VERSION_MIN))
+        return
+
+    if 'locs' not in blob:
+        msg = (
+            'Skipped blob {} due to missing locs; ' +
+            'waiting for app or other daemons.'
+        )
+        logger.info(msg.format(bid))
+        return
+
+    readBucket = findReadBucket(blob, ctx)
+    if not readBucket:
+        msg = (
+            'No read bucket for blob {}; skipped verification; ' +
+            'waiting for nogreplicad.'
+        )
+        logger.info(msg.format(bid))
+        return
+
+    # Locations are skipped if the copy operation has not completed, since the
+    # multi-part params `mpp` are set on copy completion.
+
+    for loc in blob['locs']:
+        if loc['status'] != 'online':
+            msg = 'Skipped verify loc {}/{} due to status `{} != online`.'
+            logger.info(msg.format(loc['bucket'], bid, loc['status']))
+            continue
+        err = ensureLocVerified(blob, loc, readBucket, ctx=ctx)
+        if err:
+            return
+
+    ensureShaVerified(blob, readBucket, ctx)
+
+
+def expireStaleLocks(ctx):
+    """`expireStaleLocks()` expires checksum locks.
+
+    It removes only locks that are related to `nogsumd`.
+
+    It only removes the locks and update `mtime`, without any additional
+    updates.  `nogsumd` will detect the updated `mtime` and retry processing.
+
+    """
+    cutoff = datetime.utcnow() - LOCK_EXPIRE_TIMEDELTA
+    for op in [LOCK_OP_CHKETAG, LOCK_OP_CHKSUM]:
+        lockSel = {
+            'op': op,
+            'ts': { '$lt': cutoff },
+        }
+        ur = ctx.db.blobs.update_many(
+            { 'locks': { '$elemMatch': lockSel } },
+            {
+                '$pull': { 'locks': lockSel },
+                '$currentDate': { 'mtime': True },
+            },
+        )
+        cnt = ur.matched_count
+        if cnt > 0:
+            s = '' if cnt == 1 else 's'
+            msg = 'Expired {} stale {} lock{s}.'.format(cnt, op, s=s)
+            logger.info(msg)
+            nogdStaleLocksExpiredTotal.labels(op=op).inc(cnt)
+
+
+def updateCutoff(nextCutoff, ctx):
+    ur = ctx.db.daemons.update_one(
+        { '_id': ctx.daemonId, 'cutoff': { '$lt': nextCutoff } },
+        {
+            '$set': { 'cutoff': nextCutoff },
+            '$currentDate': { 'mtime': True },
+        }
+    )
+    logger.info('Advanced cutoff to at least {}.'.format(nextCutoff))
+
+
+def mainloop(vault):
+    ctx = newContext(vault)
+    ctx.checkBucketAccess()
+    cfg = vault.cfg
+
+    daemonId = cfg['daemonId']
+    msg = 'Using daemon id `{}` to manage state in MongoDB.'
+    logger.info(msg.format(daemonId))
+    daemons = ctx.db.daemons
+    try:
+        daemons.insert_one({
+            '_id': daemonId,
+            'cutoff': UNIX_EPOCH,
+        })
+        logger.info('Initialized daemon state; processing starts from epoch.')
+    except DuplicateKeyError:
+        pass
+
+    if cfg.get('resetCutoff', False):
+        ur = daemons.update_one(
+            { '_id': daemonId },
+            {
+                '$set': { 'cutoff': UNIX_EPOCH },
+                '$currentDate': { 'mtime': True },
+            }
+        )
+        if ur.matched_count == 1:
+            logger.info('Reset cutoff; processing starts from epoch.')
+        else:
+            logger.error('Failed to reset cutoff.')
+
+    # See `nogreplicad` for details on cutoff logic.
+
+    updateCutoffIntervalS = 5
+
+    isFirst = True
+    while True:
+        if vault.mtime > cfg['mtime']:
+            logger.info('Credentials have been updated.')
+            cfg = vault.cfg
+            ctx = newContext(vault)
+            logger.info('Updated connections after credentials update.')
+
+        expireStaleLocks(ctx)
+
+        cutoff = daemons.find_one({ '_id': daemonId })['cutoff']
+        if isFirst:
+            msg = 'Processing starts with mtime cutoff {}.'
+            logger.info(msg.format(cutoff))
+            isFirst = False
+
+        nextCutoff = cutoff
+        prevMtime = cutoff
+        mtime = cutoff
+        nProcessed = 0
+        nextCutoffUpdateTime = time() + updateCutoffIntervalS
+
+        sel = {
+            '$or': [
+                { 'mtime': { '$exists': False } },
+                { 'mtime': { '$gt': cutoff } },
+            ],
+        }
+        reportedBatch = False
+        for blob in ctx.db.blobs.find(sel).sort('mtime'):
+            if not reportedBatch:
+                msg = 'Begin processing batch of blobs with mtime > cutoff {}.'
+                logger.info(msg.format(cutoff))
+                reportedBatch = True
+            processBlob(blob, ctx)
+            nogdBlobsProcessedTotal.inc()
+            nProcessed += 1
+            mtime = blob.get('mtime', nextCutoff)
+            if mtime > prevMtime:
+                nextCutoff = max(nextCutoff, prevMtime)
+            prevMtime = mtime
+            if nextCutoff > cutoff and time() > nextCutoffUpdateTime:
+                updateCutoff(nextCutoff, ctx)
+                cutoff = nextCutoff
+                nextCutoffUpdateTime = time() + updateCutoffIntervalS
+
+        if reportedBatch:
+            msg = 'Completed processing batch of blobs with mtime > cutoff {}.'
+            logger.info(msg.format(cutoff))
+
+        nextCutoff = max(nextCutoff, mtime)
+        if nextCutoff > cutoff:
+            updateCutoff(nextCutoff, ctx)
+
+        if nProcessed == 0:
+            sleep(5)
+
+
+def main():
+    vault = None
+    try:
+        installSigTermHandler()
+        vault = newCfgVault()
+        vault.startRenewalDaemon()
+        startStatusServer(vault)
+        startMetricsServer()
+        mainloop(vault)
+        code = 0
+    except SigTerm:
+        logger.info('Received TERM; shutting down.')
+        code = 0
+    except KeyboardInterrupt:
+        logger.info('Received SIGINT; shutting down.')
+        code = 0
+    except Exception as err:
+        logger.critical('Unexpected exception: {}'.format(err), exc_info=True)
+        logger.info('Shutting down after unexpected exception.')
+        code = 1
+
+    if vault:
+        vault.shutdown()
+
+    logging.shutdown()
+    exit(code)
+
+
+if __name__ == '__main__':
+    main()

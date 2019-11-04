@@ -1,0 +1,18 @@
+{
+  "name": "nog-ldap",
+  "version": "0.0.1",
+  "description": "Handling connections to LDAP servers for user info",
+  "main": "index-server.js",
+  "scripts": {
+    "lint": "\"$(git rev-parse --show-toplevel)\"/node_modules/.bin/eslint .",
+    "lint-fix": "meteor npm run lint -- --fix",
+    "test": "echo \"Error: no test specified.\" && exit 1"
+  },
+  "keywords": [
+    "Nog"
+  ],
+  "author": "Marc Osterland <osterland@zib.de>",
+  "license": "MIT",
+  "//": "See toplevel package.json for ESLint dependencies",
+  "devDependencies": { }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "nog-error-codes",
+  "version": "0.0.0",
+  "description": "Nog error specs that are used by multiple packages",
+  "main": "index-server.js",
+  "browser": "index-client.js",
+  "scripts": {
+    "lint": "\"$(git rev-parse --show-toplevel)\"/node_modules/.bin/eslint .",
+    "lint-fix": "meteor npm run lint -- --fix",
+    "test": "npm run test-headless",
+    "test-watch": "echo >&2 'nog-error-codes has no unit tests.' && exit 0 && cd \"$(git rev-parse --show-toplevel)\"/web/apps/packages-testapp && npm run test-packages-watch-nog-error-codes",
+    "test-headless": "echo >&2 'nog-error-codes has no unit tests.' && exit 0 && cd \"$(git rev-parse --show-toplevel)\"/web/apps/packages-testapp && npm run test-packages-headless-nog-error-codes"
+  },
+  "keywords": [
+    "Nog"
+  ],
+  "author": "Steffen Prohaska <prohaska@zib.de>",
+  "license": "MIT",
+  "//": "See toplevel package.json for ESLint dependencies",
+  "devDependencies": { }
+}

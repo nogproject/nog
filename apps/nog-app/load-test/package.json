@@ -1,0 +1,14 @@
+{
+  "name": "nog-load-test",
+  "version": "0.0.1",
+  "description": "Nog load tests",
+  "main": "",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "mongodb": "^1.4.35"
+  }
+}

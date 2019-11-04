@@ -1,0 +1,429 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+semver='0.2.0-dev'
+
+version() {
+    echo "nogfsosdwbakd3-${semver}"
+    exit 0
+}
+
+nogfsosdwbakd3="$(realpath "${BASH_SOURCE[0]}")"
+
+usage() {
+    cat <<\EOF
+Usage:
+    nogfsosdwbakd3 [--config <config>]
+    nogfsosdwbakd3 [--config <config>] process <repojson>
+
+Options:
+    --config <config>  [default: /etc/nog/nogfsosdwbakd3config.sh]
+        The config file.
+
+`nogfsosdwbakd3` continuously backs up FSO shadow repositories.  The details
+are controlled by `<config>`.
+
+`nogfsosdwbakd3` has a version suffix `3` to indicate that it is incompatible
+with previous versions that were located in an internal repository.
+
+`nogfsosdwbakd3` invokes itself as `nogfsosdwbakd3 process ...` to process a
+repo.  `<repojson>` is the information that `nogfsoschd` passes to processing
+commands.
+
+EOF
+    exit 1
+}
+
+main() {
+    argparse "$@"
+    findLib
+    readConfig
+    main_${arg_cmd}
+}
+
+argparse() {
+    arg_cmd=server
+    arg_config='/etc/nog/nogfsosdwbakd3config.sh'
+    while [ $# -gt 0 ]; do
+        case $1 in
+        -h|--help)
+            usage
+            ;;
+        --version)
+            version
+            ;;
+        --config)
+            if [ $# -lt 2 ]; then
+                die '--config requires an argument.'
+            fi
+            arg_config="$2"
+            shift 2
+            ;;
+        process)
+            arg_cmd="$1"
+            shift
+            break
+            ;;
+        *)
+            break
+            ;;
+        esac
+    done
+    argparse_${arg_cmd} "$@"
+}
+
+argparse_server() {
+    if [ $# -ne 0 ]; then
+        die 'unknown argument.'
+    fi
+}
+
+argparse_process() {
+    arg_repojson=
+    while [ $# -gt 0 ]; do
+        case $1 in
+        {*)
+            if [ -n "${arg_repojson}" ]; then
+                die 'unexpected argument.'
+            fi
+            arg_repojson="$1"
+            shift
+            ;;
+        *)
+            die 'unknown argument.'
+            ;;
+        esac
+    done
+    if [ -z "${arg_repojson}" ]; then
+        die 'missing <repojson>.'
+    fi
+}
+
+findLib() {
+    for p in \
+        '/usr/local/lib/nogfsosdwbakd3' \
+        '/usr/lib/nogfsosdwbakd3' \
+    ; do
+        if [ -d "${p}" ]; then
+            libNogfsosdwbakd3="${p}"
+            return
+        fi
+    done
+    die 'Failed to find lib.'
+}
+
+# Lines <var> <eregex>.
+configVariables='
+cfgShadowHost ^\S+$
+cfgShadowRoots ^/\S+$
+cfgCheckMinDf ^/\S+\s+[0-9]+$
+cfgBuckets ^[a-z]+\s[1-9][0-9]*\s-\S.*$
+cfgCapPath ^($|/\S+$)
+cfgPrivGitForEachRef ^(none|sudo|cap)$
+'
+
+configFunctions='
+cfgShadowBackupUrlForRepo
+cfgNogfsoschdShadowBackup
+cfgNogfsoctl
+'
+
+readConfig() {
+    if ! [ -f "${arg_config}" ]; then
+        die "Missing config file \`${arg_config}\`."
+    fi
+
+    source "${arg_config}"
+
+    if [ -v cfgBackupRecipients ]; then
+        logwarn 'DEPRECATED: Remove `cfgBackupRecipients` from the config; configure per-repo GPG keys to use encryption.'
+        unset cfgBackupRecipients
+    fi
+
+    while read -r var ergx; do
+        if [ -z "${ergx}" ]; then
+            continue
+        fi
+        if ! egrep -q -e "${ergx}" <<< "${!var}"; then
+            die "Malformed config variable \`${var}\`."
+        fi
+    done <<< "${configVariables}"
+
+    for fn in ${configFunctions}; do
+        if ! isFunction ${fn}; then
+            die "Missing config function \`${fn}()\`."
+        fi
+    done
+
+    if [ -z "${cfgCapPath}" ]; then
+        withCap() {
+            true
+        }
+    else
+        withCap() {
+            PATH="${cfgCapPath}:${PATH}"
+        }
+    fi
+
+    privTarDirSubdir() {
+        local dir="$1"
+        local subdir="$2"
+        ( withCap && tar -C "${dir}" -cf- "${subdir}" )
+    }
+
+    case ${cfgPrivGitForEachRef} in
+    none)
+        privGitForEachRef() {
+            git -C "$1" for-each-ref
+        }
+        ;;
+    sudo)
+        privGitForEachRef() {
+            local dir="$1"
+            local runas
+            runas="$(sudo "${libNogfsosdwbakd3}/stat-dir-owner" "${dir}")"
+            sudo -u "${runas}" \
+                "${libNogfsosdwbakd3}/git-for-each-ref-dir" "${dir}"
+        }
+        ;;
+    cap)
+        privGitForEachRef() {
+            ( withCap && git -C "$1" for-each-ref )
+        }
+        ;;
+    esac
+}
+
+main_server() {
+    log 'Started nogfsoschd.'
+    cfgNogfsoschdShadowBackup -- \
+        "${nogfsosdwbakd3}" --config "${arg_config}" process
+}
+
+main_process() {
+    backupRepo "${arg_repojson}"
+}
+
+checkFreeSpace() {
+    local res=0
+    local path minDf
+    while read -r path minDf; do
+        if [ -z "${minDf}" ]; then
+            continue
+        fi
+        if [ "$(df --output=avail "${path}" | tail -n 1)" -ge ${minDf} ]; then
+            continue
+        fi
+        res=1
+        logerr "Free disk space ${path} < ${minDf}k"
+    done <<<"${cfgCheckMinDf}"
+    return ${res}
+}
+
+matchUuid() {
+    local ergx='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    egrep -q "${ergx}" <<<"${1}"
+}
+
+matchBackupUrl() {
+    local ergx='^nogfsobak://[a-z0-9_.-]+/[/a-z0-9_.-]*$'
+    egrep -q "${ergx}" <<<"${1}"
+}
+
+backupRepo() {
+    local json="$1"
+    local id globalPath shadowUrl shadowPath shadowRoot shadowSubir recipients
+
+    id="$(jq -r '.id' <<<"${json}")"
+    if [ "${id}" = 'null' ]; then
+        die 'missing repo id.'
+    fi
+    if ! matchUuid "${id}"; then
+        die 'malformed repo id.'
+    fi
+
+    globalPath="$(jq -r '.globalPath' <<<"${json}")"
+    if [ "${globalPath}" = 'null' ] || [ -z "${globalPath}" ]; then
+        die 'missing global path.'
+    fi
+
+    shadowUrl="$(jq -r '.shadow' <<<"${json}")"
+    if [ "${shadowUrl}" = 'null' ] || [ -z "${shadowUrl}" ]; then
+        log "Ignored repo ${id} without shadow path."
+        return 0
+    fi
+
+    local foundRoot=
+    while read -r root; do
+        if [ -z "${root}" ]; then
+            continue
+        fi
+        if ! grep -q "^${cfgShadowHost}:${root}/" <<<"${shadowUrl}"; then
+            continue
+        fi
+        foundRoot=t
+        shadowPath="$(cut -d ':' -f 2 <<<"${shadowUrl}")"
+        shadowRoot="${root}"
+        shadowSubdir="$(sed -e "s,^${root}/,," <<<"${shadowPath}")"
+    done <<<"${cfgShadowRoots}"
+    if ! test ${foundRoot}; then
+        die "Repo ${id} has invalid shadow path \`${shadowUrl}\`."
+    fi
+
+    local backupUrl
+    backupUrl="$(jq -r '.shadowBackup' <<<"${json}")"
+    local isInit=
+    if [ "${backupUrl}" = 'null' ] || [ -z "${backupUrl}" ]; then
+        if ! backupUrl="$(
+            cfgShadowBackupUrlForRepo  "${id}" "${globalPath}"
+        )"; then
+            die "Failed to determine shadow backup URL for repo ${id}."
+        fi
+        isInit=t
+    fi
+    if ! matchBackupUrl "${backupUrl}"; then
+        die "Malformed shadow backup URL \`${backupUrl}\`."
+    fi
+
+    local backupDir
+    local urlPrefix="nogfsobak://${cfgShadowHost}/"
+    case "${backupUrl}" in
+    ${urlPrefix}*)
+        backupDir="/${backupUrl:${#urlPrefix}}"
+        ;;
+    *)
+        die "shadow backup URL does not start with \`${urlPrefix}\`."
+        ;;
+    esac
+
+    local recipientsJson
+    recipientsJson="$(jq -c '.shadowBackupRecipients' <<<"${json}")"
+    if [ "${recipientsJson}" = 'null' ]; then
+        recipients=
+    else
+        recipients="$(jq -r '.[]' <<<"${recipientsJson}")"
+        if egrep -q -v -e '^[0-9A-F]{40}$' <<<"${recipients}"; then
+            die "Malformed shadow backup recipients \`${recipientsJson}\`."
+        fi
+    fi
+
+    if test ${isInit}; then
+        # `--no-vid` to allow a concurrent `init-tartt`.  `init-shadow-backup`
+        # is idempotent or fails.
+        if ! cfgNogfsoctl repo "${id}" --no-vid init-shadow-backup "${backupUrl}"; then
+            die "Failed to init shadow backup repo URL."
+        fi
+    fi
+
+    local stateFile="${backupDir}/origin.gitrefstate"
+    local refsHash
+    if ! refsHash="git-for-each-ref-sha256:$(
+        privGitForEachRef "${shadowPath}" | sha256sum | cut -d ' ' -f 1
+    )"; then
+        die 'failed to determine for-each-ref state.'
+    fi
+
+    if grep -F -q "${refsHash}" "${stateFile}" 2>/dev/null; then
+        log "Repo ${id} is up to date."
+        return 0  # Already up to date.
+    fi
+
+    if ! checkFreeSpace; then
+        die "skipped backup: insufficient free disk space."
+    fi
+
+    log "Started backup ${id} ${shadowPath} ${refsHash} ${backupDir}"
+    mkdir -p "${backupDir}"
+    cd "${backupDir}"
+
+    local tmpdir="tmp"
+    rm -rf -- "${tmpdir}"
+    mkdir "${tmpdir}"
+
+    local ts
+    ts="$(date -u +%Y%m%dT%H%M%SZ)"
+    local tmp
+    if [ -n "${recipients}" ]; then
+        log "Encrypting tar ${id} ${ts} to$(printf -- ' %s' ${recipients})"
+        tmp="${tmpdir}/${ts}.tar.gpg"
+        privTarDirSubdir "${shadowRoot}" "${shadowSubdir}" \
+        | gpg2 --encrypt $(printf -- '-r %s ' ${recipients}) \
+        > "${tmp}"
+    else
+        log "Plaintext tar ${id} ${ts}"
+        tmp="${tmpdir}/${ts}.tar"
+        privTarDirSubdir "${shadowRoot}" "${shadowSubdir}" > "${tmp}"
+    fi
+
+    addBackup "${id}" "${tmp}"
+
+    local tmp="${stateFile}.new"
+    printf '%s\n' "${refsHash}" >"${tmp}"
+    mv "${tmp}" "${stateFile}"
+
+    rm -rf -- "${tmpdir}"
+
+    log "Completed backup ${id} ${shadowPath} ${refsHash} ${backupDir}"
+}
+
+addBackup() {
+    local id="$1"
+    local bak="$2"
+
+    printf '%s' "${cfgBuckets}" \
+    | while read -r bucket nMax selCurrent; do
+        if [ -z "${selCurrent}" ]; then
+            continue
+        fi
+        addBackupBucket "${id}" "${bak}" "${bucket}" "${nMax}" "${selCurrent}"
+    done
+}
+
+addBackupBucket() {
+    local id="$1"
+    local bak="$2"
+    local bucket="$3"
+    local nMax="$4"
+    local selCurrent="$5"
+
+    mkdir -p "${bucket}"
+    if [ -n "$(find "${bucket}" -type f ${selCurrent})" ]; then
+        return
+    fi
+
+    local base="${id}_$(basename "${bak}")"
+    ln "${bak}" "${bucket}/${base}"
+    log "Added \`${bucket}/${base}\`."
+
+    find "${bucket}" -type f \
+    | sort \
+    | head -n -${nMax} \
+    | while read -r path; do
+        rm -- "${path}"
+        log "Removed \`${path}\`."
+    done
+}
+
+log() {
+    echo >&2 "$(date -Iseconds -u)" '[nogfsosdwbakd3]' "$@"
+}
+
+logwarn() {
+    log 'warning:' "$@"
+}
+
+logerr() {
+    log 'error:' "$@"
+}
+
+die() {
+    printf >&2 'fatal: %s\n' "$1"
+    exit 1
+}
+
+isFunction() {
+    declare -f "$1" >/dev/null
+}
+
+main "$@"

@@ -1,0 +1,50 @@
+#!/bin/bash
+
+set -o errexit -o nounset -o pipefail -o noglob
+
+usage() {
+    cat <<\EOF
+
+`clean-local-colls` removes all documents from local collections of a Meteor
+project.
+
+Run `clean-local-colls` in a Meteor project directory and specify the
+collections you aim to clean.
+Example:
+        clean-local-colls repos objects
+
+EOF
+  exit
+}
+
+main() {
+    if [ $# -eq 0 ]; then
+        usage
+    else
+        cleanCollections "$@"
+    fi
+}
+
+cleanCollections() {
+    echo "$(
+        for coll in "$@"; do
+            cat <<EOF
+                print('');
+                var num = db.$coll.find().count();
+                var stats = db.$coll.stats();
+                if( !stats.ok ) {
+                    print('WARNING: Collection $coll not found!');
+                } else {
+                    print('Collection $coll contains', num ,'docs.');
+                    db.$coll.remove({});
+                    num = num-db.$coll.find().count();
+                    print('Collection $coll:', num ,'docs removed');
+                }
+EOF
+        done
+    )" | meteor mongo
+}
+
+main "$@"
+
+# vim: sw=4

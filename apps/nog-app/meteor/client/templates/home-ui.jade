@@ -1,0 +1,31 @@
+template(name='home')
+  if testAccess 'isUser'
+    +homeContent
+  else if testAccess 'isGuest'
+    .jumbotron.nog-welcome-jumbotron
+      p Wait for an admin to confirm your account.
+  else
+    .jumbotron.nog-welcome-jumbotron
+      .container.nog-welcome-container
+          +welcomeAndLogIn
+
+template(name='homeContent')
+  +repos
+
+template(name='welcomeAndLogIn')
+  .row
+    .col-md-9.nog-welcome-col-text
+      h1 Welcome to nog
+      h3
+        | nog is a platform to support data scientists
+        | and experimental scientists to collaborate
+        | and manage projects, data and analyses.
+    .col-md-3.nog-welcome-col-login
+      +loginBox
+
+template(name='loginBox')
+  if services
+    if configurationLoaded
+      if dropdown
+        .div.nog-loginBox-div-centered
+          +_loginButtonsLoggedOutAllServices

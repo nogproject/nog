@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package udo;
+option go_package = "udopb";
+
+service UdoRename {
+    rpc UdoRename(UdoRenameI) returns (UdoRenameO);
+}
+
+message UdoRenameI {
+    reserved 1; // Potential future header.
+    string username = 2;
+    string old_path = 3;
+    string new_path = 4;
+}
+
+message UdoRenameO {
+}

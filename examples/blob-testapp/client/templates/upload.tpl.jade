@@ -1,0 +1,12 @@
+form
+  legend
+    h4 Upload files
+  .form-group
+    input#files(type='file' name='files[]' multiple)
+
+  +uploadHeading
+
+  hr
+
+  each uploads
+    +uploadItem

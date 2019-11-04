@@ -1,0 +1,8 @@
+template(name='objectReprImage')
+  .row
+    .col-md-12
+      if imgSrc.isPlaceholder
+        | Loading image...
+      else
+        img.nog-object-repr-img(src=imgSrc.href, alt="No preview",
+            onerror="this.src='/images/No-preview_100.png';")

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+enum JobControl {
+    JC_UNSPECIFIED = 0;
+    JC_WAIT = 1;
+    JC_NO_WAIT = 3;
+    JC_BACKGROUND = 2;
+}

@@ -1,0 +1,792 @@
+#!/usr/bin/python3 -u
+
+"""\
+Usage:
+  nogreplicad
+
+`nogreplicad` monitors the blob collection in a Nog MongoDB and replicates
+blobs to the configured buckets.
+
+The configuration is a JSON document, which can be either provided directly in
+the environment variable NOGREPLICAD_CONF; or NOGREPLICAD_CONF can contain a
+path to the JSON file.  See details below.
+
+`nogreplicad` copies blobs from the first available bucket in `sourceBuckets`
+to all `desiredBuckets`, so that each desired bucket contains a replica.
+
+`nogreplicad` maintains information in blobs as illustrated below:
+
+```
+blob = {
+    "_id": ...,
+    "mtime": ...,
+    "locs": [
+        {
+            "bucket": "...",
+            "status": "missing",
+            ...
+        },
+        {
+            "bucket": "nog",
+            "status": "copying",
+            ...
+        },
+        {
+            "bucket": "...",
+            "status": "online",
+            "mpp": "auto",
+        },
+        {
+            "bucket": "...",
+            "status": "online",
+            "mpp": {
+                "n": << number of S3 multi parts; 0 if simple put >>,
+                "psize": << multi-part size if n > 0 >>
+            },
+            ...
+        },
+        ...
+    ],
+    "locks": [
+        { "ts": ..., "holder": ..., "op": "replicate", "dstBucket": ... },
+        ...
+    ]
+}
+```
+
+`mtime` will be increased on each update in order to support a make-like scheme
+for updating dependencies.  The AWS S3 multi-part parameters are stored in
+`mpp` and can be used to recompute S3 ETags using data from any source.
+The related daemon `nogsumd` monitors mtime and verifies ETags for new
+locations.
+
+Active copy operations are represented as an entry in `locks` to prevent
+concurrent `nogreplicad` instances from starting redundant copy operations.
+Stale locks, which may result from errors or daemon restarts, will be cleared
+in the background.  Entries in `locs` that correspond to the cleared lock will
+be reset to `missing` in order to trigger a new copy operation.
+
+Missing `locs` will be initialized with multi-part params set to `auto` to tell
+`nogsumd` to guess the the right parameters.
+
+Example configuration with variants:
+
+```
+{
+    "daemonId": "nogreplicad.1",
+
+    "loglevel": "INFO",
+
+    "vaultAddr": "https://vault.service.consul:8200",
+    "vaultCacert": "/vault/etc/ca.crt.pem",
+
+    "resetCutoff": true,
+
+    "nogMongoUrl": "mongodb://mongo/nog",
+    "nogMongoUrl": "vault:darkdisney/devspr/nog/nogreplicad/nogmongo",
+
+    // SSL is enabled if CA or cert is configured.
+    "nogMongoCa": "/path/to/cabundle.pem",
+    "nogMongoCert": "/path/to/client-cert-and-key.pem",
+
+    "sourceBuckets": ["nog2", "nog"],
+    "desiredBuckets": ["nog", "nog2", "nog3"],
+
+    "buckets": [
+        {
+            "name": "nog",
+            "awsRegion": "eu-central-1",
+            "awsAccessKeyId": "AKxxxxxxxxxxxxxxxxxx",
+            "awsSecretAccessKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "awsSessionToken": "xxxxxxxxxxxxx...",
+        },
+        {
+            "name": "nog2",
+            "awsRegion": "eu-west-1",
+            "awsAccessKeyId": "AKxxxxxxxxxxxxxxxxxx",
+            "awsSecretAccessKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        },
+        {
+            "name": "nog3",
+            "endpointUrl": "https://objs3.nogproject.io",
+            "awsAccessKeyId": "AKxxxxxxxxxxxxxxxxxx",
+            "awsSecretAccessKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        },
+        {
+            ...
+            "endpointUrl": "https://objs4.nogproject.io",
+            "signatureVersion": "v4",
+        },
+        {
+            ...
+            "endpointUrl": "https://objs.devspr.darkdisney.nogproject.io",
+            "keyVault": "darkdisney/devspr/nog/nogreplicad/fuzi.awskey",
+        },
+        {
+            ...
+            "awsRegion": "eu-central-1",
+            "keyVault": "darkdisney-devspr-s3-aws/sts/nogreplicad",
+        }
+    }
+}
+```
+
+Concurrent daemons should each have a unique `daemonId` to ensure that the
+mtime cutoff is correctly tracked in the MongoDB collection `daemons`.  The
+default daemon id is `nogreplicad.<hostname>`.
+
+`resetCutoff=true` resets the processing state to revisit all blobs.
+`resetCutoff=false` keeps the state; only newer blobs, determined from their
+`mtime`, will be processed.
+
+AWS access credentials can be specified inline in the configuration or as Vault
+paths.  Vault paths must provide the same fields as the AWS secret backend,
+either an access key or an STS token.
+
+The Vault path for `nogMongoUrl` must provide a field `url`.
+"""
+
+from boto3.s3.transfer import TransferConfig
+from botocore.exceptions import ClientError as AwsClientError
+from copy import deepcopy
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from nogd import BlobStateError, updateConfFromEnv, newMongoBucketsCfgVault
+from nogd import copyWithoutSecrets
+from nogd import DocLock, LOCK_EXPIRE_TIMEDELTA
+from nogd import ensureMtime
+from nogd import installSigTermHandler, SigTerm, configureLogging
+from nogd import newMongoBucketContext
+from nogd import nogdBlobsProcessedTotal, nogdBlobsReadBytesTotal
+from nogd import nogdStaleLocksExpiredTotal
+from nogd import startMetricsServer
+from nogd import newMongoClient
+from os import environ
+from pymongo.errors import DuplicateKeyError
+from random import random
+from socket import gethostname
+from threading import Thread
+from time import sleep, time
+import attr
+import json
+import logging
+import nogd
+import prometheus_client as prom
+
+logger = logging.getLogger('nogreplicad')
+
+LOCK_OP_REPLICATE = 'replicate'
+
+UNIX_EPOCH = datetime.fromtimestamp(0)
+
+# `optRandomReplicationFailures=True` enables random failures during
+# replication.  It can be temporarily activated for robustness testing.
+
+optRandomReplicationFailures = False
+
+# The default configuration creates a `daemonId` from the hostname, assuming
+# that there is only one daemon per host and hostnames are unique, which is
+# true for default Docker container random hex hostnames.
+
+DEFAULT_CFG = {
+    'daemonId': 'nogreplicad.{}'.format(gethostname()),
+    'vaultAddr': 'https://vault.service.consul:8200',
+    'vaultCacert': '/vault/etc/ca.crt.pem',
+    'nogMongoUrl': environ.get(
+        'NOG_MONGO_URL', 'mongodb://nogmongo.service.consul/nog'
+    ),
+}
+
+nogdStaleLocksExpiredTotal.labels(op=LOCK_OP_REPLICATE).inc(0)
+
+nogdBlobsWrittenBytesTotal = prom.Counter(
+    'nogd_blobs_written_bytes_total',
+    'Cumulative size of blobs written during processing.',
+    ['purpose', 'bucket'],
+)
+
+nogdOpErrorsTotal = prom.Counter(
+    'nogd_op_errors_total',
+    (
+        'Total number of operation errors.  Operation errors are reported '
+        'to the daemon log but not stored on the blob.'
+    ),
+    ['error'],
+)
+nogdOpErrorsTotal.labels(error='nosrc').inc(0)
+
+nogdBlobsReplicatedTotal = prom.Counter(
+    'nogd_blobs_replicated_total',
+    'Total number of blobs replicated.',
+)
+
+def stringify_line(d):
+    return json.dumps(d, sort_keys=True, ensure_ascii=False)
+
+
+def startStatusServer(vault, port=8080, addr=''):
+    """`startStatusServer()` runs a minimal status HTTP endpoint.
+
+    Any path on the server responds the status, although `GET /status` should
+    be used.
+
+    See also `nogsumd`.  We should consider refactoring.
+
+    We should consider replacing the status server or simplifying it even
+    further and instead provide Prometheus metrics endpoint.  Useful metrics
+    could be the number of blobs processed, data transferred, ... .
+
+    """
+    def check():
+        summary = { 'status': 'ok' }
+        cfg = vault.cfg
+        try:
+            cl = newMongoClient(cfg)
+            db = cl.get_default_database()
+            db.blobs.find_one()
+            summary['nogmongo'] = 'ok'
+        except Exception as e:
+            summary['status'] = 'fail'
+            summary['nogmongo'] = str(e)
+        return summary
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            summary = check()
+            if summary['status'] == 'ok':
+                self.send_response(200)
+            else:
+                self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(stringify_line(summary).encode('utf-8'))
+
+        def log_message(self, format, *args):
+            return
+
+    def run():
+        httpd = HTTPServer((addr, port), Handler)
+        httpd.serve_forever()
+
+    t = Thread(name='StatusServer', target=run, daemon=True)
+    t.start()
+    logger.info('Status server listening on {}:{}'.format(addr, port))
+
+
+def newCfgVault():
+    cfg = deepcopy(DEFAULT_CFG)
+    updateConfFromEnv(cfg, 'NOGREPLICAD_CONF')
+    configureLogging(cfg)
+    logger.info('config: {}'.format(stringify_line(copyWithoutSecrets(cfg))))
+    return newMongoBucketsCfgVault(cfg)
+
+
+def newContext(vault):
+    return newMongoBucketContext(
+        vault,
+        required=['sourceBuckets', 'desiredBuckets']
+    )
+
+
+# `ensureLocs()` is not instrumented with Prometheus metrics, because it was
+# only used for legacy blobs and will be removed.
+
+def pushBlobError(blob, msg, ctx):
+    bid = blob['_id']
+    error = { 'ts': datetime.utcnow(), 'msg': msg }
+    ur = ctx.db.blobs.update_one(
+        { '_id': bid },
+        {
+            '$push': { 'errors': error },
+            '$currentDate': { 'mtime': True },
+        },
+    )
+    if ur.matched_count != 1:
+        logger.error('Failed to push error onto blob {}.'.format(bid))
+
+def ensureLocs(blob, ctx):
+    """`ensureLocs()` initializes locs on legacy blobs.
+
+    Legacy blob docs in MongoDB have no `locs`.  `ensureLocs()` uses a
+    heuristic to add `locs` with multi-part params, so that S3 ETags can be
+    computed.
+
+    `ensureLocs()` must only be used for initialization.  It cannot be used to
+    complete a partial `locs` list.  The assumption is that locs-aware code
+    will always update `locs` to match the bucket state, so there is no need to
+    complete partial `locs`.
+    """
+
+    if 'locs' in blob:
+        return
+
+    bid = blob['_id']
+    size = blob['size']
+
+    msg = 'Begin initializing blob {} locs from bucket state.'
+    logger.info(msg.format(bid))
+
+    def objectExists(s3, bucket, key, size):
+        try:
+            res = s3.head_object(Bucket=bucket, Key=key)
+        except AwsClientError as err:
+            if err.response['Error']['Code'] == '404':
+                return False
+            raise
+        # HEAD <key> returns `ContentLength` only if size > 0.
+        if res.get('ContentLength', 0) != size:
+            msg = 'Blob {}/{} size mismatch; mongo blob.size {}, s3 HEAD {}.'
+            msg = msg.format(bucket, key, size, res['ContentLength'])
+            raise BlobStateError(msg)
+        return True
+
+    locs = []
+    for bucket, s3 in ctx.s3Clients.items():
+        try:
+            if not objectExists(s3, bucket, bid, size):
+                continue
+        except BlobStateError as err:
+            logger.error(str(err))
+            pushBlobError(blob, msg=str(err), ctx=ctx)
+            continue
+        locs.append({
+            'bucket': bucket,
+            'status': 'online',
+            'mpp': 'auto',  # Tell nogsumd to guess mpp.
+        })
+
+    ur = ctx.db.blobs.update_one(
+        {
+            '_id': bid,
+            'locs': { '$exists': False },
+        },
+        {
+            '$set': { 'locs': locs },
+            '$currentDate': { 'mtime': True },
+        },
+    )
+    if ur.matched_count == 1:
+        logger.info('Completed initializing blob {} locs.'.format(bid))
+    else:
+        msg = (
+            'Ignoring failure to update blob {} locs; ' +
+            'the reason could be a concurrent update.'
+        ).format(bid)
+        logger.warning(msg)
+        return
+
+    blob['locs'] = locs
+
+
+def ensureReplicated(blob, ctx):
+    """`ensureReplicated()` copies a blob to the desired buckets if necessary.
+
+    `ensureReplicated()` expects that `blob` has a list of `locs`.  Otherwise,
+    it will immediately return, expecting that `locs` will be added later, and
+    `ensureReplicated()` will be called again.
+
+    """
+    bid = blob['_id']
+    if 'locs' not in blob:
+        msg = 'Skipped replication of blob {} due to missing locs.'
+        msg = msg.format(bid)
+        logger.warning(msg)
+        return
+
+    sourceBuckets = ctx.sourceBuckets  # Ordered by preference.
+    desiredBuckets = set(ctx.desiredBuckets)
+    currentBuckets = set(
+        loc['bucket']
+        for loc in blob['locs']
+        if 'bucket' in loc and loc['status'] != 'missing'
+    )
+    missingBuckets = desiredBuckets - currentBuckets
+
+    if len(missingBuckets) == 0:
+        logger.info('Blob {} is already fully replicated.'.format(bid))
+        return
+
+    srcBucket = None
+    for bkt in sourceBuckets:
+        if bkt in currentBuckets:
+            srcBucket = bkt
+            break
+    if not srcBucket:
+        logger.error('No source bucket for blob {}.'.format(bid))
+        nogdOpErrorsTotal.labels(error='nosrc').inc()
+        return
+
+    for dstBucket in missingBuckets:
+        replicateBlob(blob, srcBucket, dstBucket, ctx)
+
+
+def replicateBlob(blob, srcBucket, dstBucket, ctx):
+    """`replicateBlob()` replicates a blob, managing locs and bucket state.
+
+    It manages concurrency by trying to push a lock that represents the desired
+    replication into `locks`.  Copying is skipped if there is already a lock,
+    assuming that the corresponding copy operation will eventually complete or
+    the lock will be removed by `expireStaleLocks()`.  `copyBlob()` will renew
+    the lock while the copy operation is active.
+
+    `replicateBlob()` marks the destination loc as `copying`.  It then copies
+    and finally marks loc as `online`, storing multi-part params `mpp` that
+    were used for the copy destination, so that S3 ETags can be recomputed
+    later.
+
+    """
+    bid = blob['_id']
+    size = blob['size']
+
+    lock = DocLock(
+        collection=ctx.db.blobs, docid=bid, holder=ctx.daemonId,
+        core={ 'op': LOCK_OP_REPLICATE, 'dstBucket': dstBucket },
+    )
+    if not lock.tryLock():
+        msg = 'Skipped replicate blob to {}/{} due to conflicting lock.'
+        logger.info(msg.format(dstBucket, bid))
+        return
+
+    # `blob` is from a scanning cursor and may be outdated if another
+    # `nogreplicad` has replicated it in the meantime.  Check in MongoDB again
+    # whether a replication is necessary before starting the potentially
+    # expensive operation.
+
+    sel = {
+        '_id': bid,
+        'locs': { '$elemMatch': {
+            'bucket': dstBucket,
+            'status': { '$ne': 'missing' }
+        } }
+    }
+    if ctx.db.blobs.find_one(sel):
+        msg = 'Skipped replicate blob {}/{} during recheck.'
+        logger.info(msg.format(dstBucket, bid))
+        lock.unlock()
+        return
+
+    logger.info('Begin replicating blob {}, size {}, from `{}` to `{}`'.format(
+        bid, size, srcBucket, dstBucket
+    ))
+
+    if optRandomReplicationFailures:
+        if random() < 0.5:
+            logger.debug('DEBUG: Simulated random replication failure.')
+            return
+
+    # Ensure first that destination loc is present.  Then update.
+
+    ignore = ctx.db.blobs.update_one(
+        { '_id': bid, 'locs.bucket': { '$ne': dstBucket } },
+        { '$push': { 'locs': { 'bucket': dstBucket, 'status': 'init' } } },
+    )
+    ur = ctx.db.blobs.update_one(
+        { '_id': bid, 'locs.bucket': dstBucket },
+        {
+            '$set': { 'locs.$.status': 'copying' },
+            '$currentDate': { 'mtime': True },
+        },
+    )
+    if ur.matched_count == 0:
+        raise BlobStateError('Failed to update locs.')
+
+    mpp = copyBlob(bid, srcBucket, dstBucket, ctx=ctx, lock=lock)
+    if mpp.size != size:
+        raise BlobStateError('Copy size mismatch.')
+
+    if mpp.nParts > 0:
+        mpp = { 'n': mpp.nParts, 'psize': mpp.partSize }
+    else:
+        mpp = { 'n': 0 }
+    ur = ctx.db.blobs.update_one(
+        { '_id': bid, 'locs.bucket': dstBucket },
+        {
+            '$set': { 'locs.$.status': 'online', 'locs.$.mpp': mpp },
+            '$currentDate': { 'mtime': True },
+        },
+    )
+    if ur.matched_count == 1:
+        msg = 'Completed replication to {}/{}.'
+        logger.info(msg.format(dstBucket, bid))
+    else:
+        raise BlobStateError('Failed to update locs.')
+
+    nogdBlobsReplicatedTotal.inc()
+    lock.unlock()
+
+
+@attr.s
+class MultiPartParams(object):
+    size = attr.ib()
+    partSize = attr.ib()
+    nParts = attr.ib()
+
+
+def copyBlob(bid, srcBucket, dstBucket, ctx, lock):
+    """`copyBlob()` copies data and regularly renews the lock.
+
+    `copyBlob()` gets the object and streams data into a managed upload, which
+    uses the default Boto3 transfer configuration, that is it uses parallel
+    multi-part upload for larger files.
+
+    `copyBlob()` returns the multi-part params that were used for the
+    destination, so that the AWS ETag can be recomputed from the data.
+
+    """
+    s3Dst = ctx.s3Clients[dstBucket]
+    s3Src = ctx.s3Clients[srcBucket]
+    tc = TransferConfig()
+
+    # Don't use `s3Dst.copy()`, since it does not work with Ceph S3.  Error:
+    # `An error occurred (NotImplemented) when calling the UploadPartCopy
+    # operation: Unknown`.
+
+    # s3Dst.copy(
+    #     CopySource={ 'Bucket': srcBucket, 'Key': bid }, SourceClient=s3Src,
+    #     Bucket=dstBucket, Key=bid,
+    #     Config=tc,
+    # )
+
+    total = 0
+
+    def cb(k):
+        nonlocal total
+        total += k
+        lock.renewLock()
+
+    body = s3Src.get_object(Bucket=srcBucket, Key=bid)['Body']
+    s3Dst.upload_fileobj(
+        body, Bucket=dstBucket, Key=bid, Config=tc, Callback=cb
+    )
+
+    nogdBlobsReadBytesTotal.labels(
+        purpose='replicate', bucket=srcBucket,
+    ).inc(total)
+    nogdBlobsWrittenBytesTotal.labels(
+        purpose='replicate', bucket=dstBucket,
+    ).inc(total)
+
+    if total <= tc.multipart_threshold:
+        nParts = 0
+        partSize = 0
+    else:
+        partSize = tc.multipart_chunksize
+        # No need to handle size 0 case, since total > 0 => nParts >= 1.
+        nParts = (total + partSize - 1) // partSize
+
+    return MultiPartParams(size=total, nParts=nParts, partSize=partSize)
+
+
+def processBlob(blob, ctx):
+    ensureMtime(blob, ctx)
+
+    bid = blob['_id']
+    if blob['status'] != 'available':
+        msg = (
+            'Skipped blob {}, because its status `{}` ' +
+            'is not equal `available`.'
+        )
+        logger.warning(msg.format(bid, blob['status']))
+        return
+
+    ensureLocs(blob, ctx)
+    ensureReplicated(blob, ctx)
+
+
+def expireStaleLocks(ctx):
+    """`expireStaleLocks()` expires locks and sets their locs to `missing`.
+
+    The implementation searches bucket-by-bucket for expired locks.  It uses
+    separate updates for settings locs status to `missing` and for removing the
+    lock.  Separate updates seem more obvious than a complex update that could
+    achieve several things at once.  Performance should be unproblematic, since
+    stale locks should be rare and the search should be supported by a sparse
+    MongoDB index on `locks.ts`.
+
+    """
+    desiredBuckets = ctx.desiredBuckets
+    cutoff = datetime.utcnow() - LOCK_EXPIRE_TIMEDELTA
+    for bkt in desiredBuckets:
+        lockSel = {
+            'op': LOCK_OP_REPLICATE, 'dstBucket': bkt, 'ts': { '$lt': cutoff },
+        }
+        blobSel = {
+            'locks': { '$elemMatch': lockSel },
+        }
+        for blob in ctx.db.blobs.find(blobSel):
+            bid = blob['_id']
+            ctx.db.blobs.update_one(
+                {
+                    '_id': bid,
+                    'locs': { '$elemMatch': {
+                        'bucket': bkt, 'status': 'copying'
+                    } },
+                },
+                { '$set': { 'locs.$.status': 'missing' } },
+            )
+            ctx.db.blobs.update_one(
+                { '_id': bid },
+                {
+                    '$pull': { 'locks': lockSel },
+                    '$currentDate': { 'mtime': True },
+                },
+            )
+            msg = 'Expired stale lock {}/dstBucket={},op={}.'
+            logger.info(msg.format(bid, bkt, LOCK_OP_REPLICATE))
+            nogdStaleLocksExpiredTotal.labels(op=LOCK_OP_REPLICATE).inc()
+
+
+def updateCutoff(nextCutoff, ctx):
+    ur = ctx.db.daemons.update_one(
+        { '_id': ctx.daemonId, 'cutoff': { '$lt': nextCutoff } },
+        {
+            '$set': { 'cutoff': nextCutoff },
+            '$currentDate': { 'mtime': True },
+        }
+    )
+    logger.info('Advanced cutoff to at least {}.'.format(nextCutoff))
+
+
+def mainloop(vault):
+    ctx = newContext(vault)
+    ctx.checkBucketAccess()
+    cfg = vault.cfg
+
+    daemonId = cfg['daemonId']
+    msg = 'Using daemon id `{}` to manage state in MongoDB.'
+    logger.info(msg.format(daemonId))
+    daemons = ctx.db.daemons
+    try:
+        daemons.insert_one({
+            '_id': daemonId,
+            'cutoff': UNIX_EPOCH,
+        })
+        logger.info('Initialized daemon state; processing starts from epoch.')
+    except DuplicateKeyError:
+        pass
+
+    if cfg.get('resetCutoff', False):
+        ur = daemons.update_one(
+            { '_id': daemonId },
+            {
+                '$set': { 'cutoff': UNIX_EPOCH },
+                '$currentDate': { 'mtime': True },
+            }
+        )
+        if ur.matched_count == 1:
+            logger.info('Reset cutoff; processing starts from epoch.')
+        else:
+            logger.error('Failed to reset cutoff.')
+
+    # Maintaining the `cutoff` is a bit tricky if multiple blobs with identical
+    # `mtime` should be handled correctly.  `cutoff` must be advanced only
+    # after processing all blobs that have the same `mtime`.  If `cutoff` is
+    # advanced too early, some blobs might be skipped after a restart.  During
+    # normal operations, it is probably not a issue, since new blobs, which are
+    # manipulated in separate MongoDB updates, can be assumed to receive
+    # different `mtimes`.  But in special situations, like re-processing all
+    # existing blobs, a MongoDB updateMany may assign identical `mtimes`.
+    #
+    # The loop maintains the current and the previous mtime and advances
+    # `nextCutoff` to the previous mtime only if the current mtime is strictly
+    # greater to ensure that the `nextCutoff` is a safe candidate for an
+    # update.
+    #
+    # While processing blobs, `nextCutoff` is written to MongoDB only every
+    # `updateCutoffIntervalS` seconds to keep the number of writes to MongoDB
+    # low.
+    #
+    # After completing a `find()`, the largest mtime is written to MongoDB
+    # unconditionally, assuming that blobs will only be updated in separate
+    # database operations that will result in larger mtimes.
+
+    updateCutoffIntervalS = 5
+
+    isFirst = True
+    while True:
+        if vault.mtime > cfg['mtime']:
+            logger.info('Credentials have been updated.')
+            cfg = vault.cfg
+            ctx = newContext(vault)
+            logger.info('Updated connections after credentials update.')
+
+        expireStaleLocks(ctx)
+
+        cutoff = ctx.db.daemons.find_one({ '_id': daemonId })['cutoff']
+        if isFirst:
+            msg = 'Processing starts with mtime cutoff {}.'
+            logger.info(msg.format(cutoff))
+            isFirst = False
+
+        nextCutoff = cutoff
+        prevMtime = cutoff
+        mtime = cutoff
+        nProcessed = 0
+        nextCutoffUpdateTime = time() + updateCutoffIntervalS
+
+        reportedBatch = False
+        sel = {
+            'error': { '$exists': False },
+            '$or': [
+                { 'mtime': { '$exists': False } },
+                { 'mtime': { '$gt': cutoff } },
+            ],
+        }
+        for blob in ctx.db.blobs.find(sel).sort('mtime'):
+            if not reportedBatch:
+                msg = 'Begin processing batch of blobs with mtime > cutoff {}.'
+                logger.info(msg.format(cutoff))
+                reportedBatch = True
+            processBlob(blob, ctx)
+            nogdBlobsProcessedTotal.inc()
+            nProcessed += 1
+            mtime = blob.get('mtime', nextCutoff)
+            if mtime > prevMtime:
+                nextCutoff = max(nextCutoff, prevMtime)
+            prevMtime = mtime
+            if nextCutoff > cutoff and time() > nextCutoffUpdateTime:
+                updateCutoff(nextCutoff, ctx)
+                cutoff = nextCutoff
+                nextCutoffUpdateTime = time() + updateCutoffIntervalS
+
+        if reportedBatch:
+            msg = 'Completed processing batch of blobs with mtime > cutoff {}.'
+            logger.info(msg.format(cutoff))
+
+        nextCutoff = max(nextCutoff, mtime)
+        if nextCutoff > cutoff:
+            updateCutoff(nextCutoff, ctx)
+
+        if nProcessed == 0:
+            sleep(5)
+
+
+def main():
+    vault = None
+    try:
+        installSigTermHandler()
+        vault = newCfgVault()
+        vault.startRenewalDaemon()
+        startStatusServer(vault)
+        startMetricsServer()
+        mainloop(vault)
+    except SigTerm:
+        logger.info('Received TERM; shutting down.')
+        code = 0
+    except KeyboardInterrupt:
+        logger.info('Received SIGINT; shutting down.')
+        code = 0
+    except Exception as err:
+        logger.critical('Unexpected exception: {}'.format(err), exc_info=True)
+        logger.info('Shutting down after unexpected exception.')
+        code = 1
+
+    if vault:
+        vault.shutdown()
+
+    logging.shutdown()
+    exit(code)
+
+
+if __name__ == '__main__':
+    main()

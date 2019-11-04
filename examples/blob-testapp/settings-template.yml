@@ -1,0 +1,49 @@
+# Use `../../tools/bin/gen-settings` to create `settings.json`.
+---
+{
+    "AWSAccessKeyId": "{{ accessKeyId }}",
+    "AWSSecretAccessKey": "{{ secretKey }}",
+    "AWSBucketRegion": "{{ region }}",
+    "NogAuthMasterKeys": [
+        { "keyid": "{{ randhex20-0 }}", "secretkey": "{{ randhex40-0 }}" },
+        { "keyid": "{{ randhex20-1 }}", "secretkey": "{{ randhex40-1 }}" }
+    ],
+    "upload": {
+        "bucket": "{{ bucket }}"
+    },
+    "public": {
+        "upload": {
+            "uploadSizeLimit": 2000000
+        },
+        "tests": {
+            "passwords": {
+                "user": "{{ password }}"
+            }
+        }
+    },
+    "tests": {
+        "aws": {
+          "testbucket": "{{ bucket }}"
+        }
+    }
+}
+---
+id: bucket
+q: 'Name of the S3 bucket to use for testing:'
+---
+id: region
+q: 'Name of the S3 bucket region:'
+choices:
+    - eu-central-1
+    - eu-west-1
+    - us-east-1
+    - us-west-2
+---
+id: accessKeyId
+q: 'AWS Access Key Id with to access the S3 bucket:'
+---
+id: secretKey
+q: 'Corresponding AWS Secret Access key:'
+---
+id: password
+q: 'Password that will be used for the a local testing user:'

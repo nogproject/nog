@@ -1,0 +1,50 @@
+// Check peer versions before importing anything else to report version
+// problems before they are reported as import errors.
+import './package-peer-versions.js';
+
+import grpc from 'grpc';
+
+import {
+  // RegistryEvent
+  EV_FSO_REGISTRY_ADDED,
+  EV_FSO_ROOT_ADDED,
+  EV_FSO_ROOT_REMOVED,
+  EV_FSO_ROOT_UPDATED,
+  EV_FSO_REPO_ACCEPTED,
+  EV_FSO_REPO_ADDED,
+  EV_FSO_REPO_REINIT_ACCEPTED,
+  EV_FSO_REPO_ENABLE_GITLAB_ACCEPTED,
+  EV_FSO_REPO_NAMING_UPDATED,
+  EV_FSO_REPO_NAMING_CONFIG_UPDATED,
+  EV_FSO_REPO_INIT_POLICY_UPDATED,
+  EV_FSO_REPO_MOVE_ACCEPTED,
+  EV_FSO_ROOT_ARCHIVE_RECIPIENTS_UPDATED,
+  EV_FSO_ROOT_SHADOW_BACKUP_RECIPIENTS_UPDATED,
+} from './proto.js';
+
+import {
+  connectFsoRegGrpc,
+  createAuthorizationCallCreds,
+} from './grpc.js';
+
+export {
+  connectFsoRegGrpc,
+  createAuthorizationCallCreds,
+  grpc,
+
+  // RegistryEvent
+  EV_FSO_REGISTRY_ADDED,
+  EV_FSO_ROOT_ADDED,
+  EV_FSO_ROOT_REMOVED,
+  EV_FSO_ROOT_UPDATED,
+  EV_FSO_REPO_ACCEPTED,
+  EV_FSO_REPO_ADDED,
+  EV_FSO_REPO_REINIT_ACCEPTED,
+  EV_FSO_REPO_ENABLE_GITLAB_ACCEPTED,
+  EV_FSO_REPO_NAMING_UPDATED,
+  EV_FSO_REPO_NAMING_CONFIG_UPDATED,
+  EV_FSO_REPO_INIT_POLICY_UPDATED,
+  EV_FSO_REPO_MOVE_ACCEPTED,
+  EV_FSO_ROOT_ARCHIVE_RECIPIENTS_UPDATED,
+  EV_FSO_ROOT_SHADOW_BACKUP_RECIPIENTS_UPDATED,
+};

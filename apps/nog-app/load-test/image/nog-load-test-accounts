@@ -1,0 +1,56 @@
+#!/bin/bash
+
+set -o errexit -o nounset -o pipefail -o noglob
+
+if [ $(id -u) = '0' ]; then
+    echo 'Switching to user `test`.'
+    exec setuser test "${BASH_SOURCE[0]}"
+fi
+
+export DISPLAY=:1
+
+if [ -z "${VNC_PASSWD:-}" ]; then
+    VNC_PASSWD=$(openssl rand -base64 6)
+    echo >&2 "Using random vnc passwd: ${VNC_PASSWD}"
+fi
+
+if [ -z "${NOG_LOAD_TEST_CONFIG:-}" ]; then
+    echo >&2 'Missing NOG_LOAD_TEST_CONFIG'
+    exit 1
+fi
+
+isHttpOk() {
+    local url="$1"
+    [ "$(curl -s -o /dev/null -w "%{http_code}" "${url}")" = "200" ]
+}
+
+waitForSelenium() {
+    while ! isHttpOk 'http://localhost:4444/wd/hub/static/resource/hub.html'; do
+        echo 'Waiting for selenium...'
+        sleep 1
+    done
+}
+
+mkdir -p "${HOME}/.vnc"
+x11vnc -storepasswd ${VNC_PASSWD} "${HOME}/.vnc/passwd"
+
+# Kill jobs in reverse order.
+trap '
+    killall chromedriver || true ;
+    killall java || true ;
+    kill $(jobs -p | tac) || true ;
+' EXIT
+
+# Do not use tightvnc, since key strokes get corrupted; see
+# <https://bugs.chromium.org/p/chromedriver/issues/detail?id=707>.
+
+Xvfb ${DISPLAY} -screen 0 1280x1024x16 &
+sleep 1
+fluxbox &
+x11vnc -display ${DISPLAY} -bg -xkb -rfbport 5901 -rfbauth ${HOME}/.vnc/passwd
+selenium &
+
+waitForSelenium
+
+cd /opt/nog-load-test/accounts
+nightwatch -e chrome

@@ -1,0 +1,369 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+import "repo-init.proto";
+import "workflows.proto";
+import "git-details.proto";
+
+service Repos {
+    rpc GetRepo(GetRepoI) returns (GetRepoO);
+
+    rpc ConfirmShadow(ConfirmShadowI) returns (ConfirmShadowO);
+
+    rpc PostMoveRepoStaReleased(PostMoveRepoStaReleasedI) returns (PostMoveRepoStaReleasedO);
+    rpc PostMoveRepoAppAccepted(PostMoveRepoAppAcceptedI) returns (PostMoveRepoAppAcceptedO);
+    rpc CommitMoveRepo(CommitMoveRepoI) returns (CommitMoveRepoO);
+
+    rpc BeginMoveShadow(BeginMoveShadowI) returns (BeginMoveShadowO);
+    rpc PostMoveShadowStaDisabled(PostMoveShadowStaDisabledI) returns (PostMoveShadowStaDisabledO);
+    rpc CommitMoveShadow(CommitMoveShadowI) returns (CommitMoveShadowO);
+
+    rpc ConfirmGit(ConfirmGitI) returns (ConfirmGitO);
+
+    rpc InitTartt(InitTarttI) returns (InitTarttO);
+
+    rpc UpdateArchiveRecipients(UpdateArchiveRecipientsI) returns (UpdateArchiveRecipientsO);
+    rpc DeleteArchiveRecipients(DeleteArchiveRecipientsI) returns (DeleteArchiveRecipientsO);
+
+    rpc InitShadowBackup(InitShadowBackupI) returns (InitShadowBackupO);
+    rpc MoveShadowBackup(MoveShadowBackupI) returns (MoveShadowBackupO);
+
+    rpc UpdateShadowBackupRecipients(UpdateShadowBackupRecipientsI) returns (UpdateShadowBackupRecipientsO);
+    rpc DeleteShadowBackupRecipients(DeleteShadowBackupRecipientsI) returns (DeleteShadowBackupRecipientsO);
+
+    rpc SetRepoError(SetRepoErrorI) returns (SetRepoErrorO);
+    rpc ClearRepoError(ClearRepoErrorI) returns (ClearRepoErrorO);
+
+    rpc Events(RepoEventsI) returns (stream RepoEventsO);
+    rpc WorkflowEvents(RepoWorkflowEventsI) returns (stream RepoWorkflowEventsO);
+}
+
+message GetRepoI {
+    bytes repo = 1;
+}
+
+message GetRepoO {
+    bytes repo = 1;
+    bytes vid = 2;
+
+    string registry = 9;
+    string global_path = 3;
+    string file = 4;
+    string shadow = 5;
+    string archive = 10;
+    // `archive_recipients` are 20-byte GPG key fingerprints.
+    repeated bytes archive_recipients = 12;
+    string shadow_backup = 11;
+    // `shadow_backup_recipients` are 20-byte GPG key fingerprints.
+    repeated bytes shadow_backup_recipients = 13;
+
+    enum StorageTierCode {
+        ST_UNSPECIFIED = 0;
+        ST_ONLINE = 1;
+        ST_FROZEN = 2;
+        ST_ARCHIVED = 3;
+        ST_FREEZING = 4;
+        ST_FREEZE_FAILED = 5;
+        ST_UNFREEZING = 6;
+        ST_UNFREEZE_FAILED = 7;
+        ST_ARCHIVING = 8;
+        ST_ARCHIVE_FAILED = 9;
+        ST_UNARCHIVING = 10;
+        ST_UNARCHIVE_FAILED = 11;
+    }
+    StorageTierCode storage_tier = 14;
+
+    string gitlab = 6;
+    int64 gitlab_project_id = 7;
+
+    string error_message = 8;
+}
+
+message RepoEventsI {
+    bytes repo = 1;
+    bytes after = 2;
+    bool watch = 3;
+}
+
+message RepoEventsO {
+    bytes repo = 1;
+    repeated RepoEvent events = 2;
+    bool will_block = 3;
+}
+
+message RepoWorkflowEventsI {
+    bytes repo = 1;
+    bytes workflow = 2;
+    bytes after = 3;
+    bool watch = 4;
+}
+
+message RepoWorkflowEventsO {
+    bytes repo = 1;
+    bytes workflow = 2;
+    repeated WorkflowEvent events = 3;
+    bool will_block = 4;
+}
+
+message ConfirmShadowI {
+    bytes repo = 1;
+    bytes vid = 3;
+    string shadow_path = 2;
+}
+
+message ConfirmShadowO {
+    bytes vid = 1;
+}
+
+message PostMoveRepoStaReleasedI {
+    bytes repo = 1;
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message PostMoveRepoStaReleasedO {
+    bytes workflow_vid = 1;
+}
+
+message PostMoveRepoAppAcceptedI {
+    bytes repo = 1;
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message PostMoveRepoAppAcceptedO {
+    bytes workflow_vid = 1;
+}
+
+message CommitMoveRepoI {
+    bytes repo = 1;
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    string new_shadow_path = 4;
+}
+
+message CommitMoveRepoO {
+    bytes workflow_vid = 1;
+}
+
+message BeginMoveShadowI {
+    bytes repo = 1;
+    bytes vid = 2;
+    bytes workflow = 3;
+    string new_shadow_path = 4;
+}
+
+message BeginMoveShadowO {
+    bytes vid = 1;
+}
+
+message CommitMoveShadowI {
+    bytes repo = 1;
+    reserved 2; // bytes vid = 2;
+    bytes workflow = 3;
+    bytes workflow_vid = 4;
+}
+
+message CommitMoveShadowO {
+    reserved 1; // bytes vid = 1;
+    bytes workflow_vid = 2;
+}
+
+message PostMoveShadowStaDisabledI {
+    bytes repo = 1;
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message PostMoveShadowStaDisabledO {
+    bytes workflow_vid = 1;
+}
+
+message InitTarttI {
+    bytes repo = 1;
+    bytes vid = 2;
+    string tartt_url = 3;
+}
+
+message InitTarttO {
+    bytes vid = 1;
+}
+
+message InitShadowBackupI {
+    bytes repo = 1;
+    bytes vid = 2;
+    string shadow_backup_url = 3;
+}
+
+message InitShadowBackupO {
+    bytes vid = 1;
+}
+
+message MoveShadowBackupI {
+    bytes repo = 1;
+    bytes vid = 2;
+    string new_shadow_backup_url = 3;
+}
+
+message MoveShadowBackupO {
+    bytes vid = 1;
+}
+
+message ConfirmGitI {
+    bytes repo = 1;
+    bytes vid = 3;
+    int64 gitlab_project_id = 2;
+}
+
+message ConfirmGitO {
+    bytes vid = 1;
+}
+
+message SetRepoErrorI {
+    bytes repo = 1;
+    bytes vid = 3;
+    string error_message = 2;
+}
+
+message SetRepoErrorO {
+    bytes vid = 1;
+}
+
+message ClearRepoErrorI {
+    bytes repo = 1;
+    bytes vid = 3;
+    string error_message = 2;
+}
+
+message ClearRepoErrorO {
+    bytes vid = 1;
+}
+
+// `RepoEvent` is a subset of the full `nogevents.Event` message.
+message RepoEvent {
+    enum Type {
+        EV_UNSPECIFIED = 0;
+
+        // reserved 30 to 39; // fsorepos
+        // reserved 60 to 69; // fsorepos
+        // reserved 150 to 159; // fsorepos
+        EV_FSO_REPO_INIT_STARTED = 31;
+        EV_FSO_SHADOW_REPO_CREATED = 32;
+        EV_FSO_GIT_REPO_CREATED = 33;
+        EV_FSO_GIT_TO_NOG_CLONED = 34;
+        EV_FSO_REPO_ERROR_SET = 35;
+        EV_FSO_REPO_ERROR_CLEARED = 36;
+        EV_FSO_ENABLE_GITLAB_ACCEPTED = 37;
+        EV_FSO_TARTT_REPO_CREATED = 38;
+        EV_FSO_SHADOW_BACKUP_REPO_CREATED = 39;
+        EV_FSO_SHADOW_BACKUP_REPO_MOVED = 63;
+        EV_FSO_SHADOW_REPO_MOVE_STARTED = 61;
+        EV_FSO_SHADOW_REPO_MOVED = 62;
+        EV_FSO_REPO_MOVE_STARTED = 64;
+        EV_FSO_REPO_MOVED = 65;
+        EV_FSO_ARCHIVE_RECIPIENTS_UPDATED = 66;
+        EV_FSO_SHADOW_BACKUP_RECIPIENTS_UPDATED = 67;
+        EV_FSO_FREEZE_REPO_STARTED = 68; // DEPRECATED: use workflow freeze-repo instead
+        EV_FSO_FREEZE_REPO_COMPLETED = 69; // DEPRECATED: use workflow freeze-repo instead
+        EV_FSO_UNFREEZE_REPO_STARTED = 151; // DEPRECATED: use workflow unfreeze-repo instead
+        EV_FSO_UNFREEZE_REPO_COMPLETED = 152; // DEPRECATED: use workflow unfreeze-repo instead
+        EV_FSO_FREEZE_REPO_STARTED_2 = 161; // from workflow freeze-repo
+        EV_FSO_FREEZE_REPO_COMPLETED_2 = 164; // from workflow freeze-repo
+        EV_FSO_UNFREEZE_REPO_STARTED_2 = 171; // from workflow unfreeze-repo
+        EV_FSO_UNFREEZE_REPO_COMPLETED_2 = 174; // from workflow unfreeze-repo
+        EV_FSO_ARCHIVE_REPO_STARTED = 181; // from workflow archive-repo
+        EV_FSO_ARCHIVE_REPO_COMPLETED = 186; // from workflow archive-repo
+        EV_FSO_UNARCHIVE_REPO_STARTED = 201; // from workflow unarchive-repo
+        EV_FSO_UNARCHIVE_REPO_COMPLETED = 208; // from workflow unarchive-repo
+    }
+
+    // reserved 1 to 9; // common event header
+    Type event = 1;
+    bytes id = 2;
+    bytes parent = 3;
+    reserved 4 to 9; // future common header use
+
+    // reserved 30 to 39; // fsorepos
+    bytes registry_event_id = 38;
+    FsoRepoInitInfo fso_repo_init_info = 31;
+    FsoRepoInitInfo new_fso_repo_init_info = 39;
+    FsoShadowRepoInfo fso_shadow_repo_info = 32;
+    FsoArchiveRepoInfo fso_archive_repo_info = 36;
+    FsoShadowBackupRepoInfo fso_shadow_backup_repo_info = 37;
+    FsoGitRepoInfo fso_git_repo_info = 33;
+    FsoGitToNogInfo fso_git_to_nog_info = 34;
+    string fso_repo_error_message = 35;
+    bytes workflow_id = 71; // from workflows
+    bytes workflow_event_id = 72; // from workflows
+    repeated bytes fso_gpg_key_fingerprints = 82;
+    int32 status_code = 74; // from workflows
+    string status_message = 75; // from workflows
+    GitUser git_author = 83;
+    TarttTarInfo tartt_tar_info = 103; // from workflows
+}
+
+message FsoShadowBackupRepoInfo {
+    string shadow_backup_url = 1;
+}
+
+message FsoGitRepoInfo {
+    int64 gitlab_project_id = 1;
+}
+
+message FsoGitToNogInfo {
+    string clone_path = 1;
+}
+
+message UpdateArchiveRecipientsI {
+    reserved 1; // Potential future header.
+    bytes repo = 2;
+    bytes repo_vid = 3;
+    // `archive_recipients` are 20-byte GPG key fingerprints.
+    repeated bytes archive_recipients = 4;
+}
+
+message UpdateArchiveRecipientsO {
+    reserved 1; // Potential future header.
+    bytes repo_vid = 2;
+    // `archive_recipients` are 20-byte GPG key fingerprints.
+    repeated bytes archive_recipients = 3;
+}
+
+message DeleteArchiveRecipientsI {
+    reserved 1; // Potential future header.
+    bytes repo = 2;
+    bytes repo_vid = 3;
+}
+
+message DeleteArchiveRecipientsO {
+    reserved 1; // Potential future header.
+    bytes repo_vid = 2;
+}
+
+message UpdateShadowBackupRecipientsI {
+    reserved 1; // Potential future header.
+    bytes repo = 2;
+    bytes repo_vid = 3;
+    // `shadow_backup_recipients` are 20-byte GPG key fingerprints.
+    repeated bytes shadow_backup_recipients = 4;
+}
+
+message UpdateShadowBackupRecipientsO {
+    reserved 1; // Potential future header.
+    bytes repo_vid = 2;
+    // `shadow_backup_recipients` are 20-byte GPG key fingerprints.
+    repeated bytes shadow_backup_recipients = 3;
+}
+
+message DeleteShadowBackupRecipientsI {
+    reserved 1; // Potential future header.
+    bytes repo = 2;
+    bytes repo_vid = 3;
+}
+
+message DeleteShadowBackupRecipientsO {
+    reserved 1; // Potential future header.
+    bytes repo_vid = 2;
+}

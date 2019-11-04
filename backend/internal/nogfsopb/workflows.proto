@@ -1,0 +1,205 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+import "root-info.proto";
+import "repo-init.proto";
+import "git-details.proto";
+
+// `WorkflowEvent` is a subset of the full `nogevents.Event` message.
+message WorkflowEvent {
+    enum Type {
+        EV_UNSPECIFIED = 0;
+
+        // reserved 140 to 149; // snapshot
+        EV_SNAPSHOT_BEGIN = 141;
+        EV_SNAPSHOT_END = 142;
+
+        // reserved 70 to 79; // workflow shadow-repo-move
+        EV_FSO_SHADOW_REPO_MOVE_STARTED = 61; // from fsorepos
+        EV_FSO_SHADOW_REPO_MOVED = 62; // from fsorepos
+        EV_FSO_SHADOW_REPO_MOVE_STA_DISABLED = 71;
+        EV_FSO_SHADOW_REPO_MOVE_COMMITTED = 72;
+
+        // reserved 80 to 89; // workflow repo-move
+        EV_FSO_REPO_MOVE_STARTED = 64; // from fsorepos
+        EV_FSO_REPO_MOVED = 65; // from fsorepos
+        EV_FSO_REPO_MOVE_STA_RELEASED = 81;
+        EV_FSO_REPO_MOVE_APP_ACCEPTED = 82;
+        EV_FSO_REPO_MOVE_COMMITTED = 83;
+
+        // reserved 90 to 99; // ephemeral workflows
+        EV_EPHEMERAL_WORKFLOWS_ENABLED = 91;
+        EV_WORKFLOW_INDEX_SNAPSHOT_STATE = 92;
+
+        // reserved 100 to 109; // workflow du-root
+        EV_FSO_DU_ROOT_STARTED = 101;
+        EV_FSO_DU_UPDATED = 102;
+        EV_FSO_DU_ROOT_COMPLETED = 103;
+        EV_FSO_DU_ROOT_COMMITTED = 104;
+        EV_FSO_DU_ROOT_DELETED = 105;
+
+        // reserved 110 to 119; // workflow ping-registry
+        EV_FSO_PING_REGISTRY_STARTED = 111;
+        EV_FSO_SERVER_PINGED = 112;
+        EV_FSO_SERVER_PINGS_GATHERED = 113;
+        EV_FSO_PING_REGISTRY_COMPLETED = 114;
+        EV_FSO_PING_REGISTRY_COMMITTED = 115;
+        EV_FSO_PING_REGISTRY_DELETED = 116;
+
+        // reserved 120 to 129; // workflow split-root
+        EV_FSO_SPLIT_ROOT_STARTED = 121;
+        EV_FSO_SPLIT_ROOT_DU_APPENDED = 122;
+        EV_FSO_SPLIT_ROOT_DU_COMPLETED = 123;
+        EV_FSO_SPLIT_ROOT_SUGGESTION_APPENDED = 124;
+        EV_FSO_SPLIT_ROOT_ANALYSIS_COMPLETED = 125;
+        EV_FSO_SPLIT_ROOT_DECISION_APPENDED = 126;
+        EV_FSO_SPLIT_ROOT_COMPLETED = 127;
+        EV_FSO_SPLIT_ROOT_COMMITTED = 128;
+        EV_FSO_SPLIT_ROOT_DELETED = 129;
+
+        // reserved 160 to 169; // workflow freeze-repo
+        EV_FSO_FREEZE_REPO_STARTED_2 = 161;
+        EV_FSO_FREEZE_REPO_FILES_STARTED = 162;
+        EV_FSO_FREEZE_REPO_FILES_COMPLETED = 163;
+        EV_FSO_FREEZE_REPO_COMPLETED_2 = 164;
+        EV_FSO_FREEZE_REPO_COMMITTED = 165;
+        EV_FSO_FREEZE_REPO_DELETED = 166;
+
+        // reserved 170 to 179; // workflow unfreeze-repo
+        EV_FSO_UNFREEZE_REPO_STARTED_2 = 171;
+        EV_FSO_UNFREEZE_REPO_FILES_STARTED = 172;
+        EV_FSO_UNFREEZE_REPO_FILES_COMPLETED = 173;
+        EV_FSO_UNFREEZE_REPO_COMPLETED_2 = 174;
+        EV_FSO_UNFREEZE_REPO_COMMITTED = 175;
+        EV_FSO_UNFREEZE_REPO_DELETED = 176;
+
+        // reserved 180 to 199; // workflow archive-repo
+        EV_FSO_ARCHIVE_REPO_STARTED = 181;
+        EV_FSO_ARCHIVE_REPO_FILES_STARTED = 182;
+        EV_FSO_ARCHIVE_REPO_TARTT_COMPLETED = 183;
+        EV_FSO_ARCHIVE_REPO_SWAP_STARTED = 184;
+        EV_FSO_ARCHIVE_REPO_FILES_COMPLETED = 185;
+        EV_FSO_ARCHIVE_REPO_FILES_COMMITTED = 186;
+        EV_FSO_ARCHIVE_REPO_GC_COMPLETED = 187;
+        EV_FSO_ARCHIVE_REPO_COMPLETED = 188;
+        EV_FSO_ARCHIVE_REPO_COMMITTED = 189;
+        EV_FSO_ARCHIVE_REPO_DELETED = 191;
+
+        // reserved 200 to 219; // workflow unarchive-repo
+        EV_FSO_UNARCHIVE_REPO_STARTED = 201;
+        EV_FSO_UNARCHIVE_REPO_FILES_STARTED = 202;
+        EV_FSO_UNARCHIVE_REPO_TARTT_STARTED = 203;
+        EV_FSO_UNARCHIVE_REPO_TARTT_COMPLETED = 204;
+        EV_FSO_UNARCHIVE_REPO_FILES_COMPLETED = 205;
+        EV_FSO_UNARCHIVE_REPO_FILES_COMMITTED = 206;
+        EV_FSO_UNARCHIVE_REPO_GC_COMPLETED = 207;
+        EV_FSO_UNARCHIVE_REPO_COMPLETED = 208;
+        EV_FSO_UNARCHIVE_REPO_COMMITTED = 210;
+        EV_FSO_UNARCHIVE_REPO_DELETED = 211;
+    }
+
+    // reserved 1 to 9; // common event header
+    Type event = 1;
+    bytes id = 2;
+    bytes parent = 3;
+    reserved 4 to 9; // future common header use
+
+    // reserved 70 to 79; // workflows
+    // reserved 100 to 109; // workflows
+    bytes workflow_id = 71;
+    bytes workflow_event_id = 72;
+    string fso_registry_name = 12; // from fsomain
+    bytes registry_id = 81; // from fsorepos
+    bytes registry_event_id = 38; // from fsorepos
+    bytes repo_id = 25; // from fsoregistry
+    bytes repo_event_id = 29; // from fsoregistry
+    FsoRootInfo fso_root_info = 22; // from fsoregistry
+    FsoSplitRootParams fso_split_root_params = 91; // from fsoregistry
+    FsoRepoInitInfo fso_repo_init_info = 31; // from fsorepos
+    FsoRepoInitInfo new_fso_repo_init_info = 39; // from fsorepos
+    FsoShadowRepoInfo fso_shadow_repo_info = 32; // from fsorepos
+    GitUser git_author = 83; // from fsorepos
+    int32 status_code = 74;
+    string status_message = 75;
+    PathDiskUsage path_disk_usage = 76;
+    FsoSplitRootSuggestion fso_split_root_suggestion = 77;
+    FsoSplitRootDecision fso_split_root_decision = 78;
+    WorkflowIndexState workflow_index_state = 79;
+    string WorkingDir = 101;
+    RepoAclPolicy repo_acl_policy = 102;
+    FsoArchiveRepoInfo fso_archive_repo_info = 36; // from fsorepos
+    TarttTarInfo tartt_tar_info = 103;
+}
+
+message WorkflowIndexState {
+    reserved 1; // Potential future header.
+
+    message DuRoot {
+        reserved 1; // Potential future header.
+        bytes workflow_id = 2;
+        bytes started_workflow_event_id = 3;
+        bytes completed_workflow_event_id = 4;
+        string global_root = 5;
+        string host = 6;
+        string host_root = 7;
+    }
+
+    message PingRegistry {
+        reserved 1; // Potential future header.
+        bytes workflow_id = 2;
+        bytes started_workflow_event_id = 3;
+        bytes completed_workflow_event_id = 4;
+    }
+
+    message SplitRoot {
+        reserved 1; // Potential future header.
+        bytes workflow_id = 2;
+        bytes started_workflow_event_id = 3;
+        bytes completed_workflow_event_id = 4;
+        string global_root = 5;
+        string host = 6;
+        string host_root = 7;
+    }
+
+    message FreezeRepo {
+        reserved 1; // Potential future header.
+        bytes workflow_id = 2;
+        bytes started_workflow_event_id = 3;
+        bytes completed_workflow_event_id = 4;
+        string global_path = 5;
+    }
+
+    message UnfreezeRepo {
+        reserved 1; // Potential future header.
+        bytes workflow_id = 2;
+        bytes started_workflow_event_id = 3;
+        bytes completed_workflow_event_id = 4;
+        string global_path = 5;
+    }
+
+    message ArchiveRepo {
+        reserved 1; // Potential future header.
+        bytes workflow_id = 2;
+        bytes started_workflow_event_id = 3;
+        bytes completed_workflow_event_id = 4;
+        string global_path = 5;
+    }
+
+    message UnarchiveRepo {
+        reserved 1; // Potential future header.
+        bytes workflow_id = 2;
+        bytes started_workflow_event_id = 3;
+        bytes completed_workflow_event_id = 4;
+        string global_path = 5;
+    }
+
+    repeated DuRoot du_root = 2;
+    repeated PingRegistry ping_registry = 3;
+    repeated SplitRoot split_root = 4;
+    repeated FreezeRepo freeze_repo = 5;
+    repeated UnfreezeRepo unfreeze_repo = 6;
+    repeated ArchiveRepo archive_repo = 7;
+    repeated UnarchiveRepo unarchive_repo = 8;
+}

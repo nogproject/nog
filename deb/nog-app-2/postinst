@@ -1,0 +1,42 @@
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+
+# This script may be called as described in "Debian Policy Manual" subsection
+# "Summary of ways maintainer scripts are called",
+# <https://www.debian.org/doc/debian-policy/ch-maintainerscripts.html#summary-of-ways-maintainer-scripts-are-called>.
+
+case "$1" in
+configure)
+    # Add an unprivileged daemon user and group.
+    adduser --quiet \
+        --system --group \
+        --home /nonexistent --no-create-home \
+        nogapp || true
+
+    # Unpack and install the Meteor bundle.
+    (
+        cd /usr/lib/nog-app-2
+        rm -rf bundle
+        tar -xf nog-app-2.tar.gz
+        cd bundle/programs/server
+        npm install
+        npm run install
+    )
+
+    # Install example settings if the etc dir does not yet exist.
+    if ! [ -e '/etc/nog-app-2' ]; then
+        echo 'nog-app-2: Installing example `/etc/nog-app-2/nogenv.sh`.'
+        install -m 0755 -d /etc/nog-app-2
+        install -m 0640 -g nogapp \
+            /usr/lib/nog-app-2/example.nogenv.sh /etc/nog-app-2/nogenv.sh
+    fi
+;;
+
+abort-upgrade|abort-remove|abort-deconfigure)
+;;
+
+*)
+    echo >&2 "fatal: postinst called with unknown argument '$1'."
+    exit 1
+;;
+esac

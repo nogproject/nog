@@ -1,0 +1,16 @@
+template(name='repos')
+  .row
+    .col-md-12
+      h4 Repos
+  .row
+    .col-md-12
+      button.btn.btn-default.js-create-repo(type='button') Create Repo
+  each repos
+    +reposItem
+  else
+    .row
+      .col-md-12 No repos for current user.
+
+template(name='reposItem')
+  .row
+    .col-md-12 #{fullName}

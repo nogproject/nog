@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+import "repo-init.proto";
+
+service Statds {
+    rpc Hello(StatdsHelloI) returns (StatdsHelloO);
+}
+
+service StatdsCallback {
+    rpc Ping(StatdsCallbackPingI) returns (StatdsCallbackPingO);
+    rpc IsInitRepoAllowed(IsInitRepoAllowedI) returns (IsInitRepoAllowedO);
+}
+
+message StatdsHelloI {
+    string name = 1;
+    bytes session_token = 2;
+    repeated string prefixes = 3;
+}
+
+message StatdsHelloO {
+    string callback_addr = 1;
+    uint64 callback_slot = 2;
+    bytes session_token = 3;
+}
+
+message StatdsCallbackPingI {
+    bytes session_token = 1;
+}
+
+message StatdsCallbackPingO {
+    bytes session_token = 1;
+}
+
+message IsInitRepoAllowedI {
+    string repo = 1;
+    string file_host = 2;
+    string host_path = 3;
+    SubdirTracking subdir_tracking = 4;
+}
+
+message IsInitRepoAllowedO {
+    bool is_allowed = 1;
+    string reason = 2;
+}

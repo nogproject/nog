@@ -1,0 +1,252 @@
+#!/bin/bash
+# vim: sw=4
+
+set -o errexit -o nounset -o pipefail -o noglob
+
+usage() {
+    cat <<\EOF
+Usage:
+  git-tie [-f | -ff]
+  git-tie open
+  git-tie new <branch>
+
+Options:
+  -f, --force  Disable some tie tie checks.  Use `-ff` to disable all checks.
+
+`git tie` creates a tie merge for the current branch with the corresponding
+`origin/<branch>`.  Tie merges can be used to track non-forwardable revisions
+of a topic branch.  The latest revision is at the first parent of a tie merge.
+Previous revisions are chained along the second parents.  In the following
+diagram, x and y are tie merges for two revisions b..x^ and b..y^ of a topic
+branch:
+
+  o---b---o---o---o---o---y
+       \   \             /
+        \   o---o---o---x
+         \             /
+          +------------
+
+Correspondence is established by name, ignoring Git's upstream branch
+configuration.  A corresponding remote branch must be present before the first
+tie; see example below.  This is a deliberate design decision, since the branch
+name is used in commit messages.  Using a different name for the local branch
+and the remote branch would likely cause confusion.
+
+`git tie new <branch>` creates a new topic branch that is ready for `git tie`.
+It is an alias for:
+
+    git checkout -b <branch> origin/master
+    git push -u origin <branch>
+
+`git tie open` moves from a tie merge back to the first parent after checking
+that the tie merge has been pushed to origin.
+
+`git tie` can be used to maintain a history of rebased versions of a pull
+request or any branch in general.  You may freely rebase a local version of the
+branch.  But you never force-push it.  Instead, use tie it to create a history
+of previous versions in a way that the push is always a fast-forward and
+includes all previous versions.  `next` is managed with `git tie`.
+
+Example:
+
+To create `origin/p/topic` from `origin/master` and a local `p/topic` that
+tracks `origin/p/topic`:
+
+    git tie new p/topic
+
+Assuming your start from a previous version of `origin/p/topic`:
+
+    git checkout p/topic
+
+Check whether it is a tie merge:
+
+    git show
+
+If so, go back to the first parent:
+
+    git tie open
+
+Add commits, and rebase to polish the history.
+
+Tie `p/topic` to `origin/p/topic` and push:
+
+    git tie
+    git push origin p/topic
+
+Never force-push `p/topic`.  It must fast-forward by design.
+
+EOF
+  exit
+}
+
+main() {
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -h|--help)
+                usage
+                ;;
+            open)
+                shift
+                cmdOpen "$@"
+                ;;
+            new)
+                shift
+                cmdNew "$@"
+                ;;
+            -*)
+                cmdTie "$@"
+                ;;
+            *)
+                die "Unknown argument '$1'."
+                ;;
+        esac
+    done
+    cmdTie
+}
+
+cmdTie() {
+    opt_force=0
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -h|--help)
+                usage
+                ;;
+            -f|--force)
+                let opt_force+=1
+                shift
+                ;;
+            -ff)
+                let opt_force+=2
+                shift
+                ;;
+            -*)
+                die "Unknown option '$1'."
+                ;;
+            *)
+                die "Unknown argument '$1'."
+                ;;
+        esac
+    done
+
+    branch="$(git symbolic-ref --short HEAD)" ||
+        die 'Failed to determine current branch.'
+    head="$(git rev-parse --verify HEAD)" ||
+        die 'Failed to determine commit for HEAD.'
+    origin="$(git rev-parse --verify "origin/${branch}")" ||
+        die "Failed to determine commit for 'origin/${branch}'."
+
+    if [ -n "$(git status -s)" ] ; then
+        die "Worktree contains changes."
+    fi
+
+    [ ${opt_force} -ge 2 ] || checkSelfTieTie
+    [ ${opt_force} -ge 1 ] || checkTieTie
+
+    tree=$(git rev-parse ${head}^{tree}) ||
+        die 'Failed to determine tree for current commit.'
+
+    tie=$(git commit-tree -p ${head} -p ${origin} -m "Tie ${branch}" ${tree}) ||
+        die 'Failed to tie merge.'
+
+    # Switch to detached head and use a final update-ref to create a single
+    # reflog entry for the branch.
+
+    old=$(git rev-parse "${branch}")
+    git checkout --quiet --detach
+    git merge --ff-only ${tie}
+    git commit --amend
+    new=$(git rev-parse HEAD)
+    subject="$(git show -s --pretty=%s)"
+    git update-ref "refs/heads/${branch}" -m "tie: ${subject}" ${new} ${old}
+    git checkout ${branch}
+
+    exit 0
+}
+
+checkSelfTieTie() {
+    if [ -n "$(git log --pretty=%s --grep "^Tie ${branch}" -n 1 | grep "^Tie ${branch}")" ]; then
+        git log --oneline --decorate --grep "^Tie ${branch}" -n 1
+        die "Parent history contains a tie merge of this branch; see above.  Maybe 'git rebase --onto origin/${branch}^ origin/${branch}'?  -ff disables this check."
+    fi
+    true
+}
+
+checkTieTie() {
+    if [ -n "$(git log --pretty=%s --grep '^Tie ' -n 10 | grep '^Tie ')" ]; then
+        git log --oneline --decorate --grep '^Tie ' -n 10 | grep ' Tie ' --color=no
+        die 'Parent history contains tie merges.  Up to 10 shown above.  -f disables this check.'
+    fi
+    true
+}
+
+cmdOpen() {
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -h|--help)
+                usage
+                ;;
+            -*)
+                die "Unknown option '$1'."
+                ;;
+            *)
+                die "Unknown argument '$1'."
+                ;;
+        esac
+    done
+
+    branch="$(git symbolic-ref --short HEAD)" ||
+        die 'Failed to determine current branch.'
+    head="$(git rev-parse --verify HEAD)" ||
+        die 'Failed to determine commit for HEAD.'
+    origin="$(git rev-parse --verify "origin/${branch}")" ||
+        die "Failed to determine commit for 'origin/${branch}'."
+
+    if ! git show -s --pretty=%s | grep -q "^Tie ${branch}" ; then
+        die 'HEAD does not look like a tie merge.'
+    fi
+
+    if [ ${head} != ${origin} ]; then
+        die "${branch} differs from origin/${branch}."
+    fi
+
+    git reset HEAD^
+    git show -s --pretty='reset to first parent: %h %s'
+
+    exit 0
+}
+
+cmdNew() {
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -h|--help)
+                usage
+                ;;
+            -*)
+                die "Unknown option '$1'."
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+    case $# in
+    1)
+        branch="$1"
+        ;;
+    *)
+        die "Invalid number of arguments."
+        ;;
+    esac
+
+    git checkout -b "${branch}" origin/master
+    git push -u origin "${branch}"
+
+    exit 0
+}
+
+die() {
+    printf >&2 'Error: %s\n' "$1"
+    exit 1
+}
+
+main "$@"

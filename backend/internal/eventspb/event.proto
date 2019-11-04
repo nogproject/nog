@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package nogevents;
+option go_package = "eventspb";
+
+// `Event` is a subset of the full `nogevents.Event` message.
+message Event {
+    // reserved 1 to 9; // common event header
+    bytes id = 2;
+    bytes parent = 3;
+}

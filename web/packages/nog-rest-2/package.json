@@ -1,0 +1,20 @@
+{
+  "name": "nog-rest-2",
+  "version": "0.0.0",
+  "description": "REST API server based on connect",
+  "main": "index-server.js",
+  "scripts": {
+    "lint": "\"$(git rev-parse --show-toplevel)\"/node_modules/.bin/eslint .",
+    "lint-fix": "meteor npm run lint -- --fix",
+    "test": "npm run test-headless",
+    "test-watch": "cd \"$(git rev-parse --show-toplevel)\"/web/apps/packages-testapp && npm run test-packages-watch-nog-rest-2",
+    "test-headless": "cd \"$(git rev-parse --show-toplevel)\"/web/apps/packages-testapp && npm run test-packages-headless-nog-rest-2"
+  },
+  "keywords": [
+    "Nog"
+  ],
+  "author": "Steffen Prohaska <prohaska@zib.de>",
+  "license": "MIT",
+  "//": "See toplevel package.json for ESLint dependencies",
+  "devDependencies": { }
+}

@@ -1,0 +1,21 @@
+<template name="errorDisplay">
+  {{#if haveErrors}}
+    <div class="row nog-error-display">
+      <div class="alert alert-danger" role="alert">
+        <div class="button close js-clear-errors" type="button">
+          &times;
+        </div>
+        {{#each e in errors}}
+          <p>
+            <span class="glyphicon glyphicon-exclamation-sign">
+              {{e.message}}
+              {{#if e.details}}
+                &#8212; Details: {{e.details}}
+              {{/if}}
+            </span>
+          </p>
+        {{/each}}
+      </div>
+    </div>
+  {{/if}}
+</template>

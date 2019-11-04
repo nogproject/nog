@@ -1,0 +1,67 @@
+# Wildcards for JWT encoding, not in AllFsoActions.
+- { action: "*", aa: "*", noAll: true }
+- { action: "bc/*", aa: "b*", noAll: true }
+- { action: "fso/*", aa: "f*", noAll: true }
+- { action: "uxd/*", aa: "x*", noAll: true }
+
+# Regular, but excluded from AllFsoActions.
+- { action: api, aa: a, noAll: true }
+
+# Regular.
+- { action: bc/read, aa: br, detail: name, go: AABroadcastRead }
+- { action: bc/write, aa: bw, detail: name, go: AABroadcastWrite }
+- { action: fso/admin-registry, aa: fag, detail: name, go: AAFsoAdminRegistry }
+- { action: fso/admin-repo, aa: far, detail: path, go: AAFsoAdminRepo }
+- { action: fso/admin-root, aa: fat, detail: path, go: AAFsoAdminRoot }
+- { action: fso/archive-repo, aa: fvr, detail: path, go: AAFsoArchiveRepo } # `v = archiVe`.
+- { action: fso/confirm-repo, aa: fcr, detail: path, go: AAFsoConfirmRepo }
+- { action: fso/delete-root, aa: fdt, detail: path, go: AAFsoDeleteRoot }
+- { action: fso/discover, aa: null }
+- { action: fso/discover-root, aa: null }
+- { action: fso/enable-discovery-path, aa: fed, detail: path, go: AAFsoEnableDiscoveryPath }
+- { action: fso/exec-archive-repo, aa: fxvr, detail: path, go: AAFsoExecArchiveRepo } # `x = eXec`, `v = archiVe`.
+- { action: fso/exec-du, aa: fcd, detail: path, go: AAFsoExecDu } # `c = exeC` to avoid `e = Enable`.
+- { action: fso/exec-freeze-repo, aa: fxfr, detail: path, go: AAFsoExecFreezeRepo } # `x = exeC` to avoid `e = Enable`.
+- { action: fso/exec-ping-registry, aa: fcpr, detail: name, go: AAFsoExecPingRegistry } # `c = exeC` to avoid `e = Enable`.
+- { action: fso/exec-split-root, aa: fcsr, detail: path, go: AAFsoExecSplitRoot } # `c = exeC` to avoid `e = Enable`.
+- { action: fso/exec-unarchive-repo, aa: fxuvr, detail: path, go: AAFsoExecUnarchiveRepo } # `x = eXec`, `uv = UnarchiVe`.
+- { action: fso/exec-unfreeze-repo, aa: fxufr, detail: path, go: AAFsoExecUnfreezeRepo } # `x = eXec` to avoid `e = Enable`.
+- { action: fso/find, aa: fn, detail: path, go: AAFsoFind } # `fn = FiNd` to avoid common prefix with `ffr = refresh`.
+- { action: fso/freeze-repo, aa: fzr, detail: path, go: AAFsoFreezeRepo }
+- { action: fso/home, aa: null }
+- { action: fso/init-registry, aa: fig, detail: name, go: AAFsoInitRegistry }
+- { action: fso/init-repo, aa: fir, detail: path, go: AAFsoInitRepo }
+- { action: fso/init-repo-shadow-backup, aa: fib, detail: path, go: AAFsoInitRepoShadowBackup }
+- { action: fso/init-repo-tartt, aa: fia, detail: path, go: AAFsoInitRepoTartt }
+- { action: fso/init-root, aa: fit, detail: path, go: AAFsoInitRoot }
+- { action: fso/issue-sys-token, aa: fts } # `tx = issue x token` to avoid `i = init`.
+- { action: fso/issue-user-token, aa: ftu }
+- { action: fso/list-repos, aa: null }
+- { action: fso/list-repos-recursive, aa: null }
+- { action: fso/preview, aa: null }
+- { action: fso/read-main, aa: frm, detail: name, go: AAFsoReadMain }
+- { action: fso/read-registry, aa: frg, detail: name, go: AAFsoReadRegistry }
+- { action: fso/read-repo, aa: frr, detail: path, go: AAFsoReadRepo }
+- { action: fso/read-repo-tree, aa: null }
+- { action: fso/read-root, aa: frt, detail: path, go: AAFsoReadRoot }
+- { action: fso/refresh-repo, aa: ffr, detail: path, go: AAFsoRefreshRepo }
+- { action: fso/session, aa: fs, detail: name, go: AAFsoSession }
+- { action: fso/test-udo, aa: fttu, detail: path, go: AAFsoTestUdo }
+- { action: fso/test-udo-as, aa: ftta, detail: path, go: AAFsoTestUdoAs }
+- { action: fso/unarchive-repo, aa: fuvr, detail: path, go: AAFsoUnarchiveRepo } # `uv = UnarchiVe`.
+- { action: fso/unfreeze-repo, aa: fuzr, detail: path, go: AAFsoUnfreezeRepo }
+- { action: fso/update-catalog, aa: null }
+- { action: fso/write-repo, aa: fwr, detail: path, go: AAFsoWriteRepo }
+- { action: sys/read, aa: null }
+- { action: sys/write, aa: null }
+
+# Unix domains
+- { action: uxd/init-unix-domain, aa: xid, detail: name, go: AAInitUnixDomain }
+- { action: uxd/read-unix-domain, aa: xrd, detail: name, go: AAReadUnixDomain }
+- { action: uxd/write-unix-domain, aa: xwd, detail: name, go: AAWriteUnixDomain }
+
+# Retired 2019-05: The initial freeze-repo implementation used a single action
+# `fso/exec-repo-freeze` for the freeze-repo workflow and the unfreeze-repo
+# workflow.  It has been replaced by two actions `fso/exec-freeze-repo` and
+# `fso/exec-unfreeze-repo`, so that the action names match the workflow names.
+- { action: fso/exec-repo-freeze, aa: fxrf, detail: path, go: AAFsoExecRepoFreeze }

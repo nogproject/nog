@@ -1,0 +1,18 @@
+// XXX: Don't rename hastily.  Package `nog-tree` depends on this name.
+template(name='objectReprMarkdown')
+  .row
+    .col-md-12
+      +mathjax
+        | {{{htmlFromMarkdown}}}
+
+
+// Package `nog-files` depends on the template name.
+template(name='nogReprMarkdownFileView')
+  .row
+    .col-md-12
+      +mathjax
+        | {{{htmlFromMarkdown}}}
+
+
+template(name='nogReprMarkdownIcon')
+  i.fa.fa-file-text-o

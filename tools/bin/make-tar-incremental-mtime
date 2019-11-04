@@ -1,0 +1,55 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+echo '    CC product/bin/tar-incremental-mtime'
+if [ -e 'product/bin/tar-incremental-mtime' ]; then
+    echo 'Already up to date.  Remove output to force rebuild.'
+    exit
+fi
+
+img="tmp:$(date -u +%s)"
+trap "docker image rm --no-prune '${img}' 2>/dev/null" EXIT
+
+docker build -t "${img}" - <<\EOF
+# <https://hub.docker.com/_/debian>, pulled 2019-07-30
+FROM debian:9.9@sha256:397b2157a9ea8d7f16c613aded70284292106e8b813fb1ed5de8a8785310a26a
+
+ENV GNU_TAR_VERSION=5d82c6ca76c6afb9852c4cda6acf954a524c30ed
+
+RUN set -x && \
+    apt-get update && apt-get install -y \
+        autoconf \
+        automake \
+        autopoint \
+        bison \
+        gcc \
+        git \
+        make \
+        rsync \
+        texinfo \
+        wget \
+    && \
+    apt-get clean && \
+    :
+
+RUN set -x && \
+    cd /tmp && \
+    git clone https://github.com/sprohaska/gnu-tar.git && \
+    cd gnu-tar && \
+    git checkout ${GNU_TAR_VERSION} && \
+    ./bootstrap && \
+    FORCE_UNSAFE_CONFIGURE=1 ./configure prefix=/usr/local && \
+    make && \
+    make install && \
+    cd / && \
+    rm -rf /tmp/gnu-tar
+
+# Add an empty layer, so that `docker image rm --no-prune` does not remove the
+# previous layer.
+RUN :
+EOF
+
+mkdir -p product/bin
+docker run --rm -v "$PWD:/host" "${img}" \
+    cp /usr/local/bin/tar /host/product/bin/tar-incremental-mtime

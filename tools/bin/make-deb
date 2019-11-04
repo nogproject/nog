@@ -1,0 +1,227 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+# `products` will be filled in `debX()`.
+declare -a products
+
+main() {
+    if ! [ -d '/go' ]; then
+        die 'Must be run in a godev container.'
+    fi
+
+    mkdir -p 'product/deb'
+
+    deb nog-app-2 installNogApp2
+    deb nogfsoregd installNogfsoregd
+    deb nogfsoctl installNogfsoctl
+    deb git-fso installGitFso
+    deb tartt installTartt
+    deb nogfsostad installNogfsostad
+    deb nogfsoschd installNogfsoschd
+    deb nogfsotard installNogfsotard
+    deb nogfsotarsecbakd installNogfsotarsecbakd
+    deb tar-incremental-mtime installTarIncrementalMtime
+    deb nogfsosdwbakd3 installNogfsosdwbakd3
+    deb nogfsorstd installNogfsorstd
+    deb nogfsodomd installNogfsodomd
+
+    echo '    SUMMARY deb'
+    echo
+    echo 'Debs:'
+    printf '%s\n' "${products[@]}"
+    echo
+    echo '    DONE'
+}
+
+deb() {
+    name="$1"
+    installVroot="$2"
+
+    src="deb/${name}"
+    package="$(grep '^Package:' "${src}/control" | cut -d : -f 2 | tr -d ' ')"
+    arch="$(grep '^Architecture:' "${src}/control" | cut -d : -f 2 | tr -d ' ')"
+    version="$(grep "^${name}:" versions.yml | cut -d : -f 2 | tr -d ' ')"
+    case ${version} in
+    *-*)
+        version="$(tr '-' '~' <<<"${version}")+${BUILD_TAG:-unspecified-build-tag}"
+        ;;
+    esac
+
+    deb="product/deb/${package}_${version}_${arch}.deb"
+    products+=( "${deb}" )
+    echo "    DPKG-DEB ${deb}"
+    if [ -e "${deb}" ]; then
+        echo 'Already up to date.'
+        return
+    fi
+
+    vroot=$(mktemp -d /tmp/make-deb-XXXXX)
+    trap "rm -rf '${vroot}'" EXIT
+
+    debian="${vroot}/DEBIAN"
+    install -m 0755 -d "${debian}"
+    sed <"${src}/control" \
+        -e "s/{{ *version *}}/${version}/" \
+    | install -m 0644 /dev/stdin "${debian}/control"
+
+    for script in postinst; do
+        if [ -e "${src}/${script}" ]; then
+            install -m 0755 "${src}/${script}" "${debian}/${script}"
+        fi
+    done
+
+    for other in templates; do
+        if [ -e "${src}/${other}" ]; then
+            install -m 0644 "${src}/${other}" "${debian}/${other}"
+        fi
+    done
+
+    ${installVroot}
+
+    dpkg-deb --build "${vroot}" "${deb}"
+
+    rm -r "${vroot}"
+    trap - EXIT
+}
+
+installNogApp2() {
+    lib="${vroot}/usr/lib/nog-app-2"
+    install -m 0755 -d "${lib}"
+    install -m 0644 'product/nog-app-2.tar.gz' "${lib}/nog-app-2.tar.gz"
+
+    # Install the example in `lib` instead of `doc`, so that `postinst` works
+    # with dpkg path patterns that exclude doc.
+    install -m 0644 "${src}/example.nogenv.sh" "${lib}/example.nogenv.sh"
+
+    bin="${vroot}/usr/bin"
+    install -m 0755 -d "${bin}"
+    install -m 0755 "${src}/nogapp2" "${bin}/nogapp2"
+}
+
+installNogfsoregd() {
+    bin="${vroot}/usr/bin"
+    install -m 0755 -d "${bin}"
+    install -m 0755 'product/bin/nogfsoregd' "${bin}/nogfsoregd"
+}
+
+installNogfsoctl() {
+    bin="${vroot}/usr/bin"
+    install -m 0755 -d "${bin}"
+    install -m 0755 'product/bin/nogfsoctl' "${bin}/nogfsoctl"
+}
+
+installGitFso() {
+    bin="${vroot}/usr/bin"
+    install -m 0755 -d "${bin}"
+    install -m 0755 'product/bin/git-fso' "${bin}/git-fso"
+}
+
+installTartt() {
+    bin="${vroot}/usr/bin"
+    install -m 0755 -d "${bin}"
+    for f in \
+        tartt \
+        tartt-store \
+        tartt-is-dir \
+    ; do
+        install -m 0755 "product/bin/${f}" "${bin}/${f}"
+    done
+}
+
+installNogfsostad() {
+    bin="${vroot}/usr/bin"
+    install -m 0755 -d "${bin}"
+    for f in \
+        nogfsostad \
+        nogfsostasududod \
+        nogfsostaudod-fd \
+        nogfsostasuod-fd \
+        nogfsostasvsd \
+    ; do
+        install -m 0755 "product/bin/${f}" "${bin}/${f}"
+    done
+}
+
+installNogfsoschd() {
+    bin="${vroot}/usr/bin"
+    install -m 0755 -d "${bin}"
+    install -m 0755 'product/bin/nogfsoschd' "${bin}/nogfsoschd"
+}
+
+installNogfsotard() {
+    bin="${vroot}/usr/bin"
+    install -m 0755 -d "${bin}"
+    for f in \
+        git-receive-pack-get-owner \
+        git-receive-pack-sudo-owner \
+        nogfsotard \
+        nogfsotargctd \
+    ; do
+        install -m 0755 "product/bin/${f}" "${bin}/${f}"
+    done
+
+    lib="${vroot}/usr/lib/nogfsotard"
+    install -m 0755 -d "${lib}"
+    for f in \
+        git-archive-branch-dir \
+        git-for-each-ref-dir \
+        git-is-immutable-fso-stat-dir \
+        git-is-newer-branch-dir-duration \
+        git-rev-parse-branch-dir \
+        git-rev-parse-is-valid-branch-dir \
+        stat-dir-owner \
+    ; do
+        install -m 0755 "product/bin/${f}" "${lib}/${f}"
+    done
+}
+
+installNogfsotarsecbakd() {
+    bin="${vroot}/usr/bin"
+    install -m 0755 -d "${bin}"
+    install -m 0755 'product/bin/nogfsotarsecbakd' "${bin}/nogfsotarsecbakd"
+}
+
+installTarIncrementalMtime() {
+    bin="${vroot}/usr/bin"
+    install -m 0755 -d "${bin}"
+    install -m 0755 'product/bin/tar-incremental-mtime' "${bin}/tar-incremental-mtime"
+}
+
+installNogfsosdwbakd3() {
+    bin="${vroot}/usr/bin"
+    install -m 0755 -d "${bin}"
+    for f in \
+        nogfsosdwbakd3 \
+    ; do
+        install -m 0755 "product/bin/${f}" "${bin}/${f}"
+    done
+
+    lib="${vroot}/usr/lib/nogfsosdwbakd3"
+    install -m 0755 -d "${lib}"
+    for f in \
+        git-for-each-ref-dir \
+        stat-dir-owner \
+    ; do
+        install -m 0755 "product/bin/${f}" "${lib}/${f}"
+    done
+}
+
+installNogfsorstd() {
+    bin="${vroot}/usr/bin"
+    install -m 0755 -d "${bin}"
+    install -m 0755 'product/bin/nogfsorstd' "${bin}/nogfsorstd"
+}
+
+installNogfsodomd() {
+    bin="${vroot}/usr/bin"
+    install -m 0755 -d "${bin}"
+    install -m 0755 'product/bin/nogfsodomd' "${bin}/nogfsodomd"
+}
+
+die() {
+    echo >&2 "fatal: $*"
+    exit 1
+}
+
+main "$@"

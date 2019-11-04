@@ -1,0 +1,18 @@
+{
+  "name": "nog-catalog-fso",
+  "version": "0.0.1",
+  "description": "Nog catalog file system observer plugin",
+  "main": "index-server.js",
+  "scripts": {
+    "lint": "\"$(git rev-parse --show-toplevel)\"/node_modules/.bin/eslint .",
+    "lint-fix": "meteor npm run lint -- --fix",
+    "test": "echo \"Error: no test specified.\" && exit 1"
+  },
+  "keywords": [
+    "Nog"
+  ],
+  "author": "Steffen Prohaska <prohaska@zib.de>",
+  "license": "MIT",
+  "//": "See toplevel package.json for ESLint dependencies",
+  "devDependencies": { }
+}

@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+message AuthRequiredScope {
+    string action = 1;
+    string name = 2;
+    string path = 3;
+}
+
+enum StatusCode {
+    // common codes
+    SC_OK = 0;
+
+    // context-dependent program exit codes
+    //
+    // XXX Our overlapping status codes would ideally be moved to 300 and above
+    // to avoid conflicts with reserved Linux exit codes; see
+    // <http://www.tldp.org/LDP/abs/html/exitcodes.html>.
+    reserved 1 to 99;
+    reserved 109 to 110;
+    reserved 114 to 255;
+
+    // reserved 101 to 102; // common workflow codes
+    SC_RUNNING = 100;
+    SC_FAILED = 101;
+    SC_UNIMPLEMENTED = 102;
+
+    // reserved 103 to 105; // freeze-repo codes
+    SC_REGISTRY_BEGIN_FREEZE_REPO_FAILED = 103;
+    SC_REPOS_BEGIN_FREEZE_REPO_FAILED = 104;
+    SC_STAD_FREEZE_REPO_FAILED = 105;
+
+    // reserved 106 to 108; // unfreeze-repo codes
+    SC_REGISTRY_BEGIN_UNFREEZE_REPO_FAILED = 106;
+    SC_REPOS_BEGIN_UNFREEZE_REPO_FAILED = 107;
+    SC_STAD_UNFREEZE_REPO_FAILED = 108;
+
+    // reserved 110 to 119; // archive-repo codes
+    SC_REGISTRY_BEGIN_ARCHIVE_REPO_FAILED = 111;
+    SC_REPOS_BEGIN_ARCHIVE_REPO_FAILED = 112;
+    SC_STAD_ARCHIVE_REPO_FAILED = 113;
+
+    // reserved 300 to 309; // unarchive-repo codes
+    SC_REGISTRY_BEGIN_UNARCHIVE_REPO_FAILED = 301;
+    SC_REPOS_BEGIN_UNARCHIVE_REPO_FAILED = 302;
+    SC_STAD_UNARCHIVE_REPO_FAILED = 303;
+    SC_RSTD_UNARCHIVE_REPO_FAILED = 304;
+}

@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+service Main {
+    rpc GetRegistries(GetRegistriesI) returns (GetRegistriesO);
+}
+
+message GetRegistriesI {
+}
+
+message GetRegistriesO {
+    string main = 1;
+    bytes vid = 2;
+    repeated RegistryMainInfo registries = 3;
+}
+
+message RegistryMainInfo {
+    string name = 1;
+    bool confirmed = 2;
+}

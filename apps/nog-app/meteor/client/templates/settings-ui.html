@@ -1,0 +1,40 @@
+<template name='settings'>
+  <div class="row">
+    <div class="col-md-12">
+      <ul class="nav nav-tabs">
+        <li class="active">
+          <a data-toggle="tab" href="#circles" class='js-toggle-tabs'>
+            Circles
+          </a>
+        </li>
+        <li>
+          <a data-toggle="tab" href="#search" class='js-toggle-tabs'>
+            Search Settings
+          </a>
+        </li>
+        <li>
+          <a data-toggle="tab" href="#apikeys" class='js-toggle-tabs'>
+            API Keys
+          </a>
+        </li>
+      </ul>
+      <div class="tab-content">
+        <div id="circles" class="tab-pane in active">
+          {{> manageCircles}}
+        </div>
+        <div id="search" class="tab-pane">
+          {{> searchSettings}}
+        </div>
+        <div id="apikeys" class="tab-pane">
+          <div class="row">
+            <div class="col-md-12">
+              {{#with currentUser}}
+                {{> nogApiKeys}}
+              {{/with}}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>

@@ -1,0 +1,22 @@
+#!/bin/bash
+set -o errexit -o nounset -o noglob -o pipefail
+
+if [ $# -ne 2 ]; then
+    echo >&2 'fatal: require two arguments.'
+    exit 1
+fi
+branch="$1"
+dir="$2"
+
+if ! [ "$(/usr/bin/git -C "${dir}" rev-parse --is-inside-work-tree)" = 'true' ]; then
+    printf >&2 'fatal: `%s` is not a git repository.\n' "${dir}"
+    exit 1
+fi
+
+if /usr/bin/git -C "${dir}" \
+    rev-parse -q --verify "refs/heads/${branch}" >/dev/null 2>&1 ;
+then
+    exit 10 # ok
+else
+    exit 11 # error
+fi

@@ -1,0 +1,117 @@
+#!/bin/bash
+
+set -o nounset -o errexit -o pipefail -o noglob
+
+usage() {
+    cat <<\EOF
+`meteor-run-rs-syncdb` starts three mongod servers in a replica set, multiple
+`nog-app` instances that access a first db `nog`, and multiple instances that
+access a second db `nogdup`.
+
+Execute in `apps/nog-app/meteor` and follow the instructions:
+
+```
+cd apps/nog-app/meteor
+../../../tools/bin/meteor-run-rs-syncdb
+```
+
+EOF
+    exit
+}
+
+[ $# -eq 0 ] || usage
+
+if ! pwd | grep -q 'apps/nog-app/meteor$'; then
+    echo >&2 'Wrong directory; expected `apps/nog-app/meteor`.'
+    exit 1
+fi
+
+# Discover the mongo binaries in the Meteor installation.
+xmongo="${HOME}/.meteor/$(dirname $(readlink ~/.meteor/meteor))/dev_bundle/mongodb/bin/mongo"
+xmongod="${xmongo}d"
+
+mongodPort0=28017
+mongodPort1=28018
+mongodPort2=28019
+
+app0PortMin=3000
+app0PortMax=3001
+app1PortMin=4000
+app1PortMax=4001
+settings='_private/settings-localhost-test.json'
+
+mongoRsUrl="localhost:${mongodPort0},localhost:${mongodPort1},localhost:${mongodPort2}"
+
+echo "Will start:"
+echo
+echo " - mongod on port ${mongodPort0}, ${mongodPort1}, ${mongodPort2};"
+echo " - using settings '${settings}';"
+echo " - app instances with db 'nog' on ${app0PortMin}..${app0PortMax};"
+echo " - app instances with db 'nogdup' on ${app1PortMin}..${app1PortMax}."
+echo
+echo 'You may see build problems, because the meteor app instances fight for'
+echo 'the same build directory.  But it usually works well enough for testing.'
+echo
+echo "Connect with:"
+echo
+echo '```'
+echo "${xmongo} ${mongoRsUrl}"
+echo "open http://localhost:${app0PortMin}"
+echo '...'
+echo "open http://localhost:${app0PortMax}"
+echo "open http://localhost:${app1PortMin}"
+echo '...'
+echo "open http://localhost:${app1PortMax}"
+echo '```'
+echo
+echo 'The setup can be used to test nog-syncdb-app:'
+echo
+echo '```'
+echo 'cd apps/nog-syncdb-app/meteor'
+echo 'meteor run --port 5000'
+echo '```'
+echo
+echo "The first time you start mongod, you need to create a replica set."
+echo "To do so, connect with a mongo shell, as described above, and execute:"
+echo
+echo '```'
+echo 'rs.initiate({"_id": "rs0", "members": [{"_id": 0, "host": "127.0.0.1:'${mongodPort0}'"}, {"_id": 1, "host": "127.0.0.1:'${mongodPort1}'"}, {"_id": 2, "host": "127.0.0.1:'${mongodPort2}'"}]});'
+echo 'rs.status();'
+echo '```'
+echo
+echo "ENTER to start mongod.  CTRL-C to break."
+read
+
+trap 'kill $(jobs -p)' EXIT
+
+dbdir='.meteor/local/db_rs'
+mkdir -p "${dbdir}/0" "${dbdir}/1" "${dbdir}/2"
+${xmongod} --port ${mongodPort0} --replSet 'rs0' --oplogSize 100 --dbpath "${dbdir}/0" | sed -l -e 's/^/mongod0: /' &
+${xmongod} --port ${mongodPort1} --replSet 'rs0' --oplogSize 100 --dbpath "${dbdir}/1" | sed -l -e 's/^/mongod1: /' &
+${xmongod} --port ${mongodPort2} --replSet 'rs0' --oplogSize 100 --dbpath "${dbdir}/2" | sed -l -e 's/^/mongod2: /' &
+
+sleep 1
+echo
+echo "ENTER to start app.  CTRL-C to break."
+read
+
+export MONGO_OPLOG_URL="mongodb://${mongoRsUrl}/local"
+
+export MONGO_URL="mongodb://${mongoRsUrl}/nog"
+for port in $(seq ${app0PortMin} ${app0PortMax}); do
+    meteor run \
+        --settings ${settings} \
+        --port ${port} |
+    sed -l -e "s/^/app${port}: /" &
+done
+
+export MONGO_URL="mongodb://${mongoRsUrl}/nogdup"
+for port in $(seq ${app1PortMin} ${app1PortMax}); do
+    meteor run \
+        --settings ${settings} \
+        --port ${port} |
+    sed -l -e "s/^/app${port}: /" &
+done
+
+
+sleep 1000000000

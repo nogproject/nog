@@ -1,0 +1,119 @@
+template(name='accountsAdmin')
+  if testAccess_ready 'accounts/adminView'
+    if testAccess 'accounts/adminView'
+      +accountsAdminContent
+    else
+      +denied
+
+
+template(name='accountsAdminContent')
+  .row
+    .col-md-12
+      ul.nav.nav-tabs
+        li(class='active')
+          a.js-toggle-tabs(href='#userList' data-toggle='tab')
+            strong User management
+        li
+          a.js-toggle-tabs(href='#botKeys' data-toggle='tab')
+            strong Bot keys
+      .tab-content
+        .tab-pane(id='userList' class='active')
+          br
+          +userList
+        .tab-pane(id='botKeys')
+          br
+          +botKeys
+
+
+template(name='userList')
+  div.userlist
+    p You may have to reload after modifying roles.
+    hr
+    .row
+      .col-md-2
+        with filterOptions
+          +userListFilter
+      .col-md-10
+        table.table
+          thead
+            tr
+              th Username
+              th Email
+              th Roles
+              th Id
+              th Actions
+          tbody
+            each users
+              +userListItem
+
+
+template(name='userListFilter')
+  p
+    strong Filter options
+  p
+    .formgroup
+      label Name or email:
+      input.js-filter-text(type='text')
+  p
+    strong Roles:
+    each roles
+      .checkbox
+        label
+          input.js-toggle-role(type='checkbox' checked=selected)
+          | #{label}
+  p
+    | #{nUsersFiltered} of #{nUsers} accounts
+
+template(name='userListItem')
+  tr
+    td
+      if isCurrentUser
+        strong #{username}
+      else
+        | #{username}
+
+    td #{email}
+    td #{userRoles}
+    td #{_id}
+    td
+      if isAdmin
+        button.btn.btn-sm.btn-success.js-remove-role-admins(
+              type='button' disabled=cannotRemoveRoleAdmins
+            )
+          span.glyphicon.glyphicon-check
+          | admins
+      else
+        button.btn.btn-sm.btn-default.js-add-role-admins(
+              type='button' disabled=cannotModify
+            )
+          span.glyphicon.glyphicon-unchecked
+          | admins
+
+      if isUser
+        button.btn.btn-sm.btn-success.js-remove-role-users(
+              type='button' disabled=cannotModify
+            )
+          span.glyphicon.glyphicon-check
+          | users
+      else
+        button.btn.btn-sm.btn-default.js-add-role-users(
+              type='button' disabled=cannotModify
+            )
+          span.glyphicon.glyphicon-unchecked
+          | users
+
+      | &nbsp;&nbsp;&nbsp;
+      .btn-group.btn-group-sm.nog-admin-ui-btn-group-delete
+        button.btn.btn-danger.js-delete-user-start(
+            type='button' disabled=cannotDeleteUser
+          ) Delete
+        if isDeletingUser
+          button.js-delete-user-cancel.btn.btn-primary(type='button'
+            ) Cancel
+          button.js-delete-user-confirm.btn.btn-danger(type='button'
+            ) Yes
+
+template(name='botKeys')
+  each bots
+    h4 #{username}
+    +nogApiKeys

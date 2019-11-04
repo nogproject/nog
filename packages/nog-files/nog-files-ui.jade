@@ -1,0 +1,285 @@
+template(name='nogFiles')
+  if testAccess_ready 'nog-content/get' ownerName=ownerName repoName=repoName
+    if testAccess 'nog-content/get' ownerName=ownerName repoName=repoName
+      +nogFilesContentLoader
+    else
+      +denied
+
+
+template(name='nogFilesContentLoader')
+  if isReady
+    with resolvedPath
+      +nogFilesContent
+    else
+      +nogFilesWarningUnresolvedPath repo
+  else
+    .row
+      .col-sm-8
+        strong #{ownerName} / #{repoName}
+    .row
+      .col-sm-12 Loading repo...
+
+
+template(name='nogFilesContent')
+  // Keep .t-files for Nightwatch tests.
+  .row.t-files
+    .col-sm-12
+      +nogRepoTopBarPresenter(topBarArgs)
+  +Template.dynamic template=entryViewTemplate
+
+
+template(name='nogFilesEntryDefaultView')
+  if isObject
+    +nogFilesObjectView
+  if isTree
+    +nogFilesList
+
+
+template(name='nogFilesEntryDefaultIcon')
+  i.fa(class="fa-#{icon}")
+
+
+// XXX: Use <p> to insert a bit of vertical space.  Should probably be replaced
+// by some CSS.
+
+template(name='nogFilesObjectView')
+  p
+  if errata
+    +nogFilesObjectViewErrata(errata=errata)
+  with blobHref
+    .row
+      .col-sm-6.col-sm-offset-3
+        .jumbotron
+          p.text-center
+            i.fa.fa-download
+            | Download
+            +aBlobHref
+            if fileSize
+              | (#{fileSize.value}&nbsp;#{fileSize.unit})
+            else
+              | (unknown&nbsp;size)
+  if content
+    .row
+      .col-md-12
+        pre #{content}
+
+
+template(name='nogFilesBundleView')
+  p
+  .row
+    .col-sm-12
+      if hasEntries
+        p File bundle with the following entries:
+        table.table.table-condensed.table-striped
+          tbody
+            each entries
+              tr
+                td.nog-files-entry-name-td
+                  | #{name}
+                td.nog-files-entry-description-td
+                  if description
+                    span #{description}
+      else
+        p Empty file bundle.
+  with resolvedInlineMarkdown
+    hr
+    .row
+      .col-sm-12
+        +nogFilesMarkdownPanel
+
+
+template(name='nogFilesMarkdownPanel')
+  .panel.panel-default
+    .panel-heading
+      h4 #{last.content.name}
+    .panel-body
+      .container-fluid
+        +nogReprMarkdownFileView
+
+
+
+template(name='nogFilesBundleIcon')
+  i.fa.fa-suitcase
+
+
+template(name='nogFilesList')
+  with toolbarCtx
+    +nogFilesListToolbar
+  .row.js-files-list-container
+    .col-sm-12
+      table.table.table-condensed.table-striped
+        tbody
+          each entries
+            tr(class="#{classSelected}")
+              td.nog-files-entry-name-td
+                if errata
+                  +nogFilesEntryErrata
+                +Template.dynamic template=entryIconTemplate
+                if href
+                  a(href=href) #{name}
+                else
+                  | #{name}
+              td.nog-files-entry-description-td
+                if description
+                  span #{description}
+
+
+template(name='nogFilesListToolbar')
+  .row.nog-files-list-actions
+    .col-sm-8
+      if action
+        span
+          i.fa.fa-cog.fa-spin
+          | #{action}
+      unless modalTargetRepo
+        +initTooltips
+          button.btn.btn-default.btn-sm.nog-no-border.js-download(
+            disabled=disable.download title='Download', data-toggle='tooltip')
+            i.fa.fa-download
+          if mayModify
+            +initTooltips
+              button.btn.btn-default.btn-sm.nog-no-border.js-delete(
+                disabled=disable.delete title='Delete', data-toggle='tooltip')
+                i.fa.fa-trash-o
+            +initTooltips
+              button.btn.btn-default.btn-sm.nog-no-border.js-start-rename(
+                  disabled=disable.rename
+                  title='Rename', data-toggle='tooltip')
+                i.fa.fa-pencil
+          with dropdownCtx
+            +nogFilesMoveDropdown
+            +nogFilesCopyDropdown
+      if mayAddPrograms
+        with modalTargetRepo
+          button.btn.btn-default.btn-sm.js-add-program-to-target(
+              disabled=Disabled
+            ) Add program to #{owner}/#{name}
+      if mayAddData
+        with modalTargetRepo
+          button.btn.btn-default.btn-sm.js-add-to-target(
+              disabled=Disabled
+            ) Add data to #{owner}/#{name}
+      span.nog-files-list-selection-summary #{selection.summary}
+    .col-sm-4
+      .pull-right
+        if mayModify
+          +initTooltips
+            button.btn.btn-default.btn-sm.nog-no-border.js-upload(
+              title='Upload files' data-toggle='tooltip' disabled=isDisabled)
+              i.fa.fa-upload
+          +initTooltips
+            button.btn.btn-default.btn-sm.nog-no-border.js-new-folder(
+              title='Add Folder' data-toggle='tooltip' disabled=isDisabled)
+              i.fa.fa-folder
+
+
+template(name='nogFilesMoveDropdown')
+  span.dropdown
+    button.btn.btn-default.nog-no-border.dropdown-toggle.t-move-in-repo(
+        data-toggle='dropdown' type='button' disabled=isDisabled)
+      +initTooltips
+        span(title='Move...' data-toggle='tooltip')
+          i.fa.fa-folder-open-o
+          span.caret
+    ul.dropdown-menu
+      li.dropdown-header To:
+      each targets
+        if isDisabled
+          li.dropdown-header !{indent} #{name}
+        else
+          li
+            a.js-move-to(tabindex='-1' href='#') !{indent} #{name}
+
+
+template(name='nogFilesCopyDropdown')
+  span.dropdown
+    button.btn.btn-default.nog-no-border.dropdown-toggle.t-copy-in-repo(
+        data-toggle='dropdown' type='button' disabled=isDisabled)
+      +initTooltips
+        span(title='Copy...' data-toggle='tooltip')
+          i.fa.fa-files-o
+          span.caret
+    ul.dropdown-menu
+      li.dropdown-header To:
+      each targets
+        if isDisabled
+          li.dropdown-header !{indent} #{name}
+        else
+          li
+            a.js-copy-to(tabindex='-1' href='#') !{indent} #{name}
+
+
+template(name='nogFilesRenameModal')
+  .modal.fade.js-rename-modal
+    .modal-dialog
+      .modal-content
+        .modal-header
+          button.close(data-dismiss='modal') &times;
+          h4 Rename
+        .modal-body
+          .form-group
+            label New Name
+            input.form-control.js-new-name(type='text' value=name autofocus)
+            span.help-block Enter the new name.
+        .modal-footer
+          button.btn.btn-default(data-dismiss='modal') Cancel
+          button.btn.btn-primary.js-rename(disabled=cannotRename)
+            | Rename
+
+
+template(name='nogFilesNewFolderModal')
+  .modal.js-new-folder-modal
+    .modal-dialog
+      .modal-content
+        .modal-header
+          button.close(data-dismiss='modal') &times;
+          h4 New Folder
+        .modal-body
+          input.form-control.js-folder-name(type='text', autofocus)
+        .modal-footer
+          button.btn.btn-default(data-dismiss='modal') Cancel
+          button.btn.btn-primary.js-create(disabled=cannotCreate) Create Folder
+
+
+template(name='nogFilesUploadModal')
+  .modal.js-upload-files
+    .modal-dialog.modal-lg
+      .modal-content
+        .modal-header
+          button.close(data-dismiss='modal') &times;
+          h4 Upload Files
+            +nogFilesUploadModalErrorCounts(counts=errorCounts)
+        .modal-body
+          .container-fluid
+            each uploads
+              .row
+                .col-sm-8
+                  span.h6 #{name}
+                    small
+                      | &nbsp;&nbsp;
+                      if haveSha1
+                        | sha1 #{sha1}
+                      else
+                        | sha1 #{sha1Progress}%
+                .col-sm-4
+                  .progress
+                    div(
+                      class="progress-bar {{uploadCompleteClass}}",
+                      role="progressbar",
+                      style="width: {{progressWidth}}%"
+                    )
+            +nogFilesUploadModalErrors(
+              severity='error' errors=errors onClear=clearErrorsFn
+            )
+            +nogFilesUploadModalErrors(
+              severity='warning' errors=warnings onClear=clearWarningsFn
+            )
+        .modal-footer
+          with uploadLimit
+            span The filesize limit is #{limit}.
+            span &nbsp;&nbsp;
+          span.btn.btn-primary.btn-file
+            | Choose Files...
+            input.js-files(type='file' name='files[]' multiple)
+          button.btn.btn-default.t-close-modal(data-dismiss='modal' disabled=cannotClose)
+            | Close

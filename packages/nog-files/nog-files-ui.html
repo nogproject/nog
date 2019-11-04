@@ -1,0 +1,56 @@
+<template name='nogFilesUploadModalErrorCounts'>
+  {{#if haveCounts}}
+    &nbsp;
+    <span class="{{errorTextClass}}">
+      <i class='fa fa-exclamation-circle'></i>
+      {{counts.nErrors}}
+    </span>
+    &nbsp;
+    <span class="{{warningTextClass}}">
+      <i class='fa fa-exclamation-triangle'></i>
+      {{counts.nWarnings}}
+    </span>
+  {{/if}}
+</template>
+
+
+<template name='nogFilesUploadModalErrors'>
+  {{#if errors}}
+    <div class='row'>
+      <div class='col-sm-12'>
+        <div class="alert {{alertClass}}">
+          <button class='close js-clear-errors' type='button'>&times;</button>
+          {{#each err in errors}}
+            <p>
+              <i class="fa fa-{{alertSign}}"></i>
+              {{err.message}}
+              {{#if details err}}
+                <button class='btn btn-link' type='button'
+                 data-toggle='collapse' data-target="#{{id}}-{{@index}}">
+                  Details...
+                </button>
+                <div class='collapse' id="{{id}}-{{ @index }}">
+                  {{details err}}
+                </div>
+              {{/if}}
+            </p>
+          {{/each}}
+        </div>
+      </div>
+    </div>
+  {{/if}}
+</template>
+
+
+<template name="nogFilesWarningUnresolvedPath">
+  <div class="row t-warning-unresolved-repo-path">
+    <div class="col-sm-12 alert alert-warning">
+      <strong> Warning:</strong>
+      Failed to resolve the path to repo
+      <strong>{{ownerName}}/{{repoName}}</strong>.
+      <br>
+      The repository seems to be corrupted.
+      It can be deleted in the <a href="settings">repo settings</a>.
+    </div>
+  </div>
+</template>

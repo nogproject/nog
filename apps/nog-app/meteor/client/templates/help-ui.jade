@@ -1,0 +1,11 @@
+template(name='help')
+  if testAccess_ready 'isUser'
+    if testAccess 'isUser'
+      +helpContent
+    else
+      +denied
+
+template(name='helpContent')
+  .row
+    .col-md-12
+      +helpText

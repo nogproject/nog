@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+enum SubdirTracking {
+    ST_UNSPECIFIED = 0;
+    ST_ENTER_SUBDIRS = 1;
+    ST_BUNDLE_SUBDIRS = 2;
+    ST_IGNORE_SUBDIRS = 3;
+    ST_IGNORE_MOST = 4;
+}
+
+message FsoRepoInitInfo {
+    string registry = 9;
+    string global_path = 1;
+    string creator_name = 2;
+    string creator_email = 3;
+    string file_host = 4;
+    string host_path = 5;
+    string gitlab_host = 6;
+    string gitlab_path = 7;
+    string git_to_nog_addr = 8;
+    SubdirTracking subdir_tracking = 10;
+}
+
+message FsoShadowRepoInfo {
+    string shadow_path = 1;
+    string new_shadow_path = 2;
+}
+
+message FsoArchiveRepoInfo {
+    string archive_url = 1;
+}
+
+message TarttTarInfo {
+    reserved 1; // Potential future header.
+    string path = 2;
+}

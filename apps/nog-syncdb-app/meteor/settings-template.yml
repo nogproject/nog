@@ -1,0 +1,35 @@
+# Use `../../../tools/bin/gen-settings` to create `settings.json`.
+
+# The JSON template is a YAML string in order to replace booleans by mustaches.
+---
+|
+  {
+    "syncdb": {
+      "stateId": "{{ id }}",
+      "optForceFullCopy": false,
+      "waitBeforeCopy_s": 30,
+      "src": {
+        "url": "{{ srcurl }}",
+        "dbns": "{{ dbns }}",
+        "oplogurl": "{{ oplogurl }}"
+      },
+      "dst": {
+        "url": "{{ dsturl }}"
+      }
+    }
+  }
+---
+id: id
+q: 'String that uniquely identifies this sync job:'
+---
+id: srcurl
+q: 'Mongo URL for source; db user can be read-only:'
+---
+id: dbns
+q: 'Source database name; must match srcurl:'
+---
+id: oplogurl
+q: 'Mongo URL for the source oplog; db user needs oplog access:'
+---
+id: dsturl
+q: 'Mongo URL for destination; db user needs write access:'

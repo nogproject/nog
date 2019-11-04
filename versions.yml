@@ -1,0 +1,67 @@
+# Use format that works with `grep "^${key}:" | cut -d : -f 2 | tr -d ' '`.
+
+# See `gitk -- versions.yml CHANGELOG.md` to understand the relation between
+# `versions.yml` and `CHANGELOG.md`.
+#
+# To start a new release cycle, add a changelog section that is marked as
+# 'unreleased' and bump the corresponding version to the same number with a
+# pre-release suffix `-dev`.  Leave individual program versions unchanged.
+# Bump them when the individual program changes.
+#
+# To copy the versions to the scripts in `backend/bin`:
+#
+# ```
+# ./tools/bin/apply-versions
+# ```
+#
+# To complete a release cycle, remove 'unreleased' in the changelog and `-dev`
+# from the corresponding versions.  Use a p/ branch that is based such that it
+# includes all the changes that are described in the changelog.  Usually, merge
+# to master first and then immediately complete the release cycle.
+#
+# The major semver for related server and client programs should be equal.
+# Minor, patch, and pre-releases may differ.
+
+# `nog` is the repo version.
+nog: 0.4.0
+
+# The versioning approach for the Meteor apps and packages needs to be
+# clarified.
+#
+# `nog-app` could become the version of the Nog web app.  It is
+# only a placeholder for now.
+#
+# `nog-app-2` is used in the `nogapp2sdd` kit.
+nog-app: 0.0.0
+nog-app-2: 0.1.0
+
+# `nogecho*` are example programs for illustration.
+nogecho: 0.1.1
+nogechod: 0.1.0
+
+# `nogfso` is the version for the group of related fso backend programs.
+# `nogfso*` are versions for individual programs.
+nogfso: 0.4.0
+nogfsoctl: 0.3.0
+nogfsog2nd: 0.1.0
+nogfsoregd: 0.3.0
+nogfsoschd: 0.3.0
+nogfsosdwbakd3: 0.2.0
+nogfsosdwgctd: 0.1.0
+nogfsostad: 0.4.0
+nogfsostaudod: 0.2.0
+nogfsostasvsd: 0.1.0
+nogfsotard: 0.2.0
+nogfsorstd: 0.1.0
+nogfsotargctd: 0.2.0
+nogfsotarsecbakd: 0.2.0
+nogfsotchd3: 0.1.0
+nogfsodomd: 0.1.0
+
+git-fso: 0.1.0
+
+tartt: 0.3.0
+
+# The official GNU Tar version uses major and minor.  We use the patch number,
+# starting with 1, to indicate our patch.
+tar-incremental-mtime: 1.29.1

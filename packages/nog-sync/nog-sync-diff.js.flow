@@ -1,0 +1,29 @@
+// @flow
+
+declare type SnapTree = {
+  name: string,
+  meta: {
+    nog: {
+      owner: string,
+      name: string,
+      refs: { [key: string]: string },
+      conflicts: { [key: string]: [string] },
+    },
+  },
+};
+
+declare type synchroCommitReposDiffStream$opts = {
+  aSha: string,
+  bSha: string,
+  onadded: (ab: { b: SnapTree }) => void,
+  ondeleted: (ab: { a: SnapTree }) => void,
+  onmodified: (ab: { a: SnapTree, b: SnapTree }) => void,
+  store: {
+    getCommit: (sha: string) => {},
+    getTree: (sha: string) => {},
+  },
+};
+
+declare export function synchroCommitReposDiffStream(
+  opts: synchroCommitReposDiffStream$opts
+) : void;

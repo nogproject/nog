@@ -1,0 +1,45 @@
+template(name='createRepo')
+  if testAccess_ready 'nog-content/create-repo' ownerName=currentUser.username
+    if testAccess 'nog-content/create-repo' ownerName=currentUser.username
+      +createRepoContent
+    else
+      +denied
+
+template(name='createRepoContent')
+  .row.t-create-repo
+    .col-sm-8.col-md-offset-2
+      form
+        .row
+          .col-xs-4
+            .form-group
+              label Owner
+              input.form-control(
+                type='text' value=currentUser.username id='owner')
+          .col-xs-6
+            .form-group
+              label Repository Name
+              input.t-set-repo-name.form-control(
+                type='text' placeholder='<project>_<name>_<year>-<month>'
+                id='name')
+        hr
+        .radio
+          label
+            input.t-type-files(
+              type='radio' name='wsOption' value='files' checked)
+            | File Repository
+        .radio
+          label
+            input.t-type-workspace(type='radio' name='wsOption'
+            value='analysis')
+            | Workspace
+        .radio
+          label
+            input.t-type-programs(type='radio' name='wsOption' value='registry')
+            | Program Registry
+        p.help-block.
+          A file repository can be used to upload and share files. A workspace
+          contains a datalist and analysis programs, and is used to apply
+          programs to the data in the datalist. A program registry is used by
+          developers to organize programs.
+        hr
+        button.btn.btn-primary.js-create.t-create Create Repository

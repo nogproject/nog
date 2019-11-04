@@ -1,0 +1,18 @@
+template(name='footer')
+  hr
+  .container-fluid
+    .row
+      .col-sm-5
+        p
+          small
+            a(href='http://www.zib.de/impressum') Impressum
+            = ', Contact for nog.zib.de: Steffen Prohaska'
+      .col-sm-2
+        p.text-center
+          small
+            a(href='/' title='Home screen')
+              span.glyphicon.glyphicon-blackboard
+      .col-sm-5
+        if optShowVersions
+          p.text-right
+            small #{versions}

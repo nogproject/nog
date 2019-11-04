@@ -1,0 +1,18 @@
+# Use `../../tools/bin/gen-settings` to create `settings.json`.
+---
+{
+    "NogAuthMasterKeys": [
+        { "keyid": "{{ randhex20-0 }}", "secretkey": "{{ randhex40-0 }}" },
+        { "keyid": "{{ randhex20-1 }}", "secretkey": "{{ randhex40-1 }}" }
+    ],
+    "public": {
+        "tests": {
+            "passwords": {
+                "user": "{{ password }}"
+            }
+        }
+    }
+}
+---
+id: password
+q: 'Password that will be used for the a local testing user:'

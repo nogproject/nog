@@ -1,0 +1,17 @@
+.row
+  .col-md-3(contenteditable)
+    | #{name}
+  .col-md-1
+    | #{size}
+  .col-md-4
+    if haveSha1
+      small #{sha1}
+    else
+      | #{sha1Progress}%
+  .col-md-2
+    .progress
+      div(class="progress-bar {{uploadCompleteClass}}", role="progressbar", style="width: {{progressWidth}}%")
+        | #{progress}%, #{uploaded} Bytes
+  .col-md-2
+    small #{status}
+hr

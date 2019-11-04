@@ -1,0 +1,24 @@
+{
+  "name": "routing-example",
+  "private": true,
+  "scripts": {
+    "start": "meteor run",
+    "lint": "\"$(git rev-parse --show-toplevel)\"/node_modules/.bin/eslint --ext .js --ext .jsx ."
+  },
+  "dependencies": {
+    "@babel/runtime": "^7.3.4",
+    "bootstrap": "^4.3.1",
+    "jquery": "^3.4.0",
+    "meteor-node-stubs": "^0.4.1",
+    "popper.js": "^1.15.0",
+    "react": "^16.8.6",
+    "react-dom": "^16.8.6",
+    "react-router-dom": "^5.0.0"
+  },
+  "meteor": {
+    "mainModule": {
+      "client": "client/main.js",
+      "server": "server/main.js"
+    }
+  }
+}

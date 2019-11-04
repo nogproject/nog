@@ -1,0 +1,19 @@
+{
+  "name": "nogexecd",
+  "version": "0.0.1",
+  "description": "Nog compute job execution daemon",
+  "main": "nogexecd.coffee",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Steffen Prohaska <prohaska@zib.de>",
+  "license": "MIT",
+  "dependencies": {
+    "async": "^1.4.0",
+    "coffee-script": "^1.9.3",
+    "ddp": "^0.12.0",
+    "forever-monitor": "^1.6.0",
+    "meteor-job": "^1.3.0",
+    "underscore": "^1.8.3"
+  }
+}

@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+import "job-control.proto";
+
+service PingRegistry {
+    rpc BeginPingRegistry(BeginPingRegistryI) returns (BeginPingRegistryO);
+    rpc ServerPing(ServerPingI) returns (ServerPingO);
+    rpc PostServerPingSummary(PostServerPingSummaryI) returns (PostServerPingSummaryO);
+    rpc CommitPingRegistry(CommitPingRegistryI) returns (CommitPingRegistryO);
+    rpc GetRegistryPings(GetRegistryPingsI) returns (GetRegistryPingsO);
+}
+
+message BeginPingRegistryI {
+    string registry = 1;
+    bytes vid = 2;
+    bytes workflow = 3;
+}
+
+message BeginPingRegistryO {
+    bytes registry_vid = 1;
+    bytes workflow_index_vid = 2;
+    bytes workflow_vid = 3;
+}
+
+message ServerPingI {
+    bytes workflow = 1;
+    bytes workflow_vid = 2;
+    int32 status_code = 3;
+    string status_message = 4;
+}
+
+message ServerPingO {
+    bytes workflow_vid = 1;
+}
+
+message PostServerPingSummaryI {
+    bytes workflow = 1;
+    bytes workflow_vid = 2;
+    int32 status_code = 3;
+    string status_message = 4;
+}
+
+message PostServerPingSummaryO {
+    bytes workflow_vid = 1;
+}
+
+message CommitPingRegistryI {
+    bytes workflow = 1;
+    bytes workflow_vid = 2;
+}
+
+message CommitPingRegistryO {
+    bytes workflow_vid = 1;
+    bytes workflow_index_vid = 2;
+}
+
+message GetRegistryPingsI {
+    bytes workflow = 1;
+    JobControl job_control = 2;
+}
+
+message GetRegistryPingsO {
+    bytes workflow_vid = 1;
+    enum StatusCode {
+        SC_OK = 0;
+        SC_SUMMARIZED = 100;
+        SC_ACTIVE = 101;
+    }
+    message Status {
+        int32 status_code = 1;
+        string status_message = 2;
+        bytes event_id = 3;
+    }
+    Status summary = 2;
+    repeated Status server_pings = 3;
+}

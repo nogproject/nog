@@ -1,0 +1,270 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+import "job-control.proto";
+import "root-info.proto";
+// import "status.proto"; // implicit use of enum StatusCode.
+
+service UnarchiveRepo {
+    rpc BeginUnarchiveRepo(BeginUnarchiveRepoI) returns (BeginUnarchiveRepoO);
+    rpc GetUnarchiveRepo(GetUnarchiveRepoI) returns (GetUnarchiveRepoO);
+}
+
+service ExecUnarchiveRepo {
+    rpc BeginUnarchiveRepoFiles(BeginUnarchiveRepoFilesI) returns (BeginUnarchiveRepoFilesO);
+    rpc BeginUnarchiveRepoTartt(BeginUnarchiveRepoTarttI) returns (BeginUnarchiveRepoTarttO);
+    rpc CommitUnarchiveRepoTartt(CommitUnarchiveRepoTarttI) returns (CommitUnarchiveRepoTarttO);
+    rpc AbortUnarchiveRepoTartt(AbortUnarchiveRepoTarttI) returns (AbortUnarchiveRepoTarttO);
+    rpc CommitUnarchiveRepoFiles(CommitUnarchiveRepoFilesI) returns (CommitUnarchiveRepoFilesO);
+    rpc AbortUnarchiveRepoFiles(AbortUnarchiveRepoFilesI) returns (AbortUnarchiveRepoFilesO);
+    rpc EndUnarchiveRepoFiles(EndUnarchiveRepoFilesI) returns (EndUnarchiveRepoFilesO);
+    rpc CommitUnarchiveRepoGc(CommitUnarchiveRepoGcI) returns (CommitUnarchiveRepoGcO);
+    rpc CommitUnarchiveRepo(CommitUnarchiveRepoI) returns (CommitUnarchiveRepoO);
+    rpc AbortUnarchiveRepo(AbortUnarchiveRepoI) returns (AbortUnarchiveRepoO);
+}
+
+service RegistryUnarchiveRepo {
+    rpc RegistryBeginUnarchiveRepo(RegistryBeginUnarchiveRepoI) returns (RegistryBeginUnarchiveRepoO);
+    rpc RegistryCommitUnarchiveRepo(RegistryCommitUnarchiveRepoI) returns (RegistryCommitUnarchiveRepoO);
+    rpc RegistryAbortUnarchiveRepo(RegistryAbortUnarchiveRepoI) returns (RegistryAbortUnarchiveRepoO);
+}
+
+service ReposUnarchiveRepo {
+    rpc ReposBeginUnarchiveRepo(ReposBeginUnarchiveRepoI) returns (ReposBeginUnarchiveRepoO);
+    rpc ReposCommitUnarchiveRepo(ReposCommitUnarchiveRepoI) returns (ReposCommitUnarchiveRepoO);
+    rpc ReposAbortUnarchiveRepo(ReposAbortUnarchiveRepoI) returns (ReposAbortUnarchiveRepoO);
+}
+
+message BeginUnarchiveRepoI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    bytes repo = 4;
+    bytes repo_vid = 5;
+    bytes workflow = 6;
+    string author_name = 7;
+    string author_email = 8;
+}
+
+message BeginUnarchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+    bytes repo_vid = 3;
+    bytes workflow_index_vid = 4;
+    bytes workflow_vid = 5;
+}
+
+message BeginUnarchiveRepoFilesI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    RepoAclPolicy acl_policy = 4;
+}
+
+message BeginUnarchiveRepoFilesO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message BeginUnarchiveRepoTarttI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    string working_dir = 4;
+}
+
+message BeginUnarchiveRepoTarttO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message CommitUnarchiveRepoTarttI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message CommitUnarchiveRepoTarttO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message AbortUnarchiveRepoTarttI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    int32 status_code = 4; // StatusCode unarchive-repo code.
+    string status_message = 5;
+}
+
+message AbortUnarchiveRepoTarttO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message CommitUnarchiveRepoFilesI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message CommitUnarchiveRepoFilesO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message AbortUnarchiveRepoFilesI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    int32 status_code = 4; // StatusCode unarchive-repo code.
+    string status_message = 5;
+}
+
+message AbortUnarchiveRepoFilesO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message EndUnarchiveRepoFilesI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message EndUnarchiveRepoFilesO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message CommitUnarchiveRepoGcI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message CommitUnarchiveRepoGcO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message CommitUnarchiveRepoI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message CommitUnarchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+    bytes workflow_index_vid = 3;
+}
+
+message AbortUnarchiveRepoI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    int32 status_code = 4; // StatusCode unarchive-repo code.
+    string status_message = 5;
+}
+
+message AbortUnarchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+    bytes workflow_index_vid = 3;
+}
+
+message GetUnarchiveRepoI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    JobControl job_control = 3;
+}
+
+message GetUnarchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+    string registry = 3;
+    bytes repoId = 4;
+    int32 status_code = 5; // StatusCode common code or unarchive-repo code.
+    string status_message = 6;
+}
+
+message RegistryBeginUnarchiveRepoI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    bytes repo = 4;
+    bytes workflow = 5;
+}
+
+message RegistryBeginUnarchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message RegistryCommitUnarchiveRepoI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    bytes repo = 4;
+    bytes workflow = 5;
+}
+
+message RegistryCommitUnarchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message RegistryAbortUnarchiveRepoI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    bytes repo = 4;
+    bytes workflow = 5;
+    int32 status_code = 6; // StatusCode unarchive-repo code.
+}
+
+message RegistryAbortUnarchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message ReposBeginUnarchiveRepoI {
+    reserved 1; // Potential future header.
+    bytes repo = 2;
+    bytes repo_vid = 3;
+    bytes workflow = 4;
+}
+
+message ReposBeginUnarchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes repo_vid = 2;
+}
+
+message ReposCommitUnarchiveRepoI {
+    reserved 1; // Potential future header.
+    bytes repo = 2;
+    bytes repo_vid = 3;
+    bytes workflow = 4;
+}
+
+message ReposCommitUnarchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes repo_vid = 2;
+}
+
+message ReposAbortUnarchiveRepoI {
+    reserved 1; // Potential future header.
+    bytes repo = 2;
+    bytes repo_vid = 3;
+    bytes workflow = 4;
+    int32 status_code = 5; // StatusCode unarchive-repo code.
+    string status_message = 6;
+}
+
+message ReposAbortUnarchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes repo_vid = 2;
+}

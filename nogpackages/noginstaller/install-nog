@@ -1,0 +1,66 @@
+#!/bin/bash
+
+set -o errexit -o nounset -o pipefail -o noglob
+
+rootdir="$(dirname ${BASH_SOURCE[0]})"
+rootdir="$(cd "${rootdir}" && pwd -P)"
+
+die() {
+    printf >&2 'Error: %s\n' "$1"
+    exit 1
+}
+
+type python3 >/dev/null 2>/dev/null || die 'Failed to run `python3`.
+
+`python3` must be in your PATH.  Consider using a virtualenv.
+'
+
+pydeps='
+    docopt
+    requests
+'
+err=
+for d in ${pydeps}; do
+    python3 -c "import ${d}" || err=t
+done
+test ${err} && die 'Failed to import required Python 3 dependencies.
+
+Install them (see errors above) either on the system or inside a virtualenv
+that contains the binary `python3`.
+
+'
+
+# Install in home dir.
+cd
+
+dstDir="$(pwd)/nogpackages/"
+
+if [ -d "$dstDir" ]; then
+
+printf 'Failed to install nogpackages in `%s`...\n' "${dstDir}"
+cat <<\EOF
+This directory already exists.
+To update nogpackages, please delete the directory `nogpackages` in your
+home directory and re-run the installer.
+EOF
+
+else
+
+printf 'Installing nogpm in `%s`...\n\n' "$(pwd)"
+"${rootdir}/_nogpm" install --registry nog/packages nogpm
+
+cd nogpackages/nogpm
+"${rootdir}/_nogpm" install --frozen
+printf 'Resolving dependencies in `%s`...\n' "$(pwd)"
+"${rootdir}/_nogpm" link
+
+cat <<\EOF
+
+The nog package manager has been installed as `~/nogpackages/nogpm/nogpm`.
+Consider creating a symlink in your bin dir:
+
+    ln -s ~/nogpackages/nogpm/nogpm ~/bin
+
+EOF
+
+fi

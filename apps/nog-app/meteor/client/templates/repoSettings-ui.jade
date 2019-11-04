@@ -1,0 +1,77 @@
+template(name='repoSettings')
+  if testAccess_ready 'nog-content/modify' ownerName=ownerName repoName=repoName
+    if testAccess 'nog-content/modify' ownerName=ownerName repoName=repoName
+      with repoSettingsCtx
+        +repoSettingsContent
+    else
+      +denied
+
+
+template(name='repoSettingsContent')
+  .row
+    .col-sm-12
+      h4 #{ownerName} /
+        a(href="/#{ownerName}/#{repoName}/files") #{repoName}
+  hr
+  .row
+    .col-sm-8.col-md-offset-2
+      .panel.panel-default
+        .panel-heading
+          h4 Settings
+        .panel-body
+          +repoSettingsRename
+      .panel.panel-danger
+        .panel-heading
+          h4 Danger Zone
+        .panel-body
+          +repoSettingsDelete
+
+
+template(name='repoSettingsRename')
+  form
+    .form-group
+      label Repository Name
+      .row
+        .col-xs-6
+          input.form-control.js-repo-name-text(
+              type='text' value="#{repoName}"
+            )
+        .col-xs-6
+          if action
+            span #{action}
+          else
+            button.btn.btn-default.js-rename Rename
+    if error
+      .alert.alert-danger
+        span.glyphicon.glyphicon-exclamation-sign
+        | Error: #{error}
+
+
+ template(name='repoSettingsDelete')
+  form
+    .row
+      .col-xs-6
+        .form-group
+          label Delete this Repository
+          span.help-block When you delete a repository, there is no way back.
+      .col-xs-6
+        button.btn.btn-danger.pull-right.js-start-delete.t-delete-repo
+          | Delete this Repository
+  .modal.fade.js-delete-modal
+    .modal-dialog
+      .modal-content
+        .modal-header
+          button.close(data-dismiss='modal') &times;
+          h4 Are you absolutely sure?
+        .modal-body
+          p.
+            This action <strong>CANNOT</strong> be undone.  It will permanently
+            delete the repository <strong>#{ownerName}/#{repoName}</strong>.
+          p Please type in the full name of the repository to confirm.
+          input.form-control.js-confirm-repo-name.t-confirm-repo-name(
+              type='text')
+        .modal-footer
+          button.btn.btn-default(data-dismiss='modal') Cancel
+          button.btn.btn-danger.js-delete-forever.t-delete(
+              disabled=disabled)
+            | I am sure. Delete this repository!

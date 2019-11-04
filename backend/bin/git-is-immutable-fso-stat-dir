@@ -1,0 +1,16 @@
+#!/bin/bash
+set -o errexit -o nounset -o noglob -o pipefail
+
+if [ $# -ne 1 ]; then
+    echo >&2 'fatal: require one argument.'
+    exit 1
+fi
+dir="$1"
+
+if git -C "${dir}" show master-stat:.nogtree 2>/dev/null \
+    | grep -q '^attrs: "i"$';
+then
+    exit 10 # Yes, immutable.
+else
+    exit 11 # No, not immutable.
+fi

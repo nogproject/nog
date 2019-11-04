@@ -1,0 +1,19 @@
+{
+  "name": "mongo-ssl",
+  "version": "1.0.0-0",
+  "description": "Configure Mongo SSL options from environment variables",
+  "main": "index-server.js",
+  "scripts": {
+    "lint": "\"$(git rev-parse --show-toplevel)\"/node_modules/.bin/eslint .",
+    "lint-fix": "meteor npm run lint -- --fix",
+    "pretest": "npm run lint --silent",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "Nog"
+  ],
+  "author": "Steffen Prohaska <prohaska@zib.de>",
+  "license": "MIT",
+  "//": "See toplevel package.json for ESLint dependencies",
+  "devDependencies": { }
+}

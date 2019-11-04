@@ -1,0 +1,28 @@
+{
+  "package": {
+    "authors": [
+      {
+        "email": "prohaska@zib.de",
+        "name": "Steffen Prohaska"
+      }
+    ],
+    "dependencies": [
+      {
+        "name": "nogpy"
+      }
+    ],
+    "description": "Import export between git and nog",
+    "name": "git-nog",
+    "readme": "README.md",
+    "version": {
+      "major": 0,
+      "minor": 0,
+      "patch": 1
+    },
+    "content": {
+      "files": [
+        "git-nog"
+      ]
+    }
+  }
+}

@@ -1,0 +1,12 @@
+.row.current-upload
+  if haveUpload
+    with file
+      .col-md-3
+        span #{name}
+      .col-md-9
+        .progress
+          div(
+            class="progress-bar {{uploadCompleteClass}}",
+            role="progressbar",
+            style="width: {{progressWidth}}%"
+          )

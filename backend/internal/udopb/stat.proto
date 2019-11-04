@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package udo;
+option go_package = "udopb";
+
+service UdoStat {
+    rpc UdoStat(UdoStatI) returns (UdoStatO);
+}
+
+message UdoStatI {
+    string username = 1;
+    string path = 2;
+}
+
+message UdoStatO {
+    int64 mtime = 1;
+    uint32 mode = 2;
+}

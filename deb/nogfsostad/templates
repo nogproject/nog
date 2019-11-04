@@ -1,0 +1,9 @@
+Template: nogfsostad/user
+Type: string
+Default: ngfsta
+Description: Nogfsostad user and group?
+
+Template: nogfsostad/org_group
+Type: string
+Default: ag_exorg
+Description: Unix group with all organization accounts that nogfsostad can sudo to?

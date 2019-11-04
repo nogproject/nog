@@ -1,0 +1,46 @@
+# Use `../../tools/bin/gen-settings` to create `settings.json`.
+
+# The JSON template is a YAML string in order to replace booleans by mustaches.
+---
+|
+    {
+        "AWSAccessKeyId": "{{ accessKeyId }}",
+        "AWSSecretAccessKey": "{{ secretKey }}",
+        "AWSBucketRegion": "{{ region }}",
+        "secretCodes": ["Secret&Code:For3Testing!", "{{ secretCode }}"],
+        "upload": {
+            "bucket": "{{ bucket }}"
+        },
+        "public": {
+            "ROOT_URL": "http://localhost:3000",
+            "upload": {
+                "uploadSizeLimit": 30000000
+            },
+            "optShowRepoToolbar": false
+        },
+        "tests": {
+            "aws": {
+                "testbucket": "{{ bucket }}"
+            }
+        }
+    }
+---
+id: bucket
+q: 'Name of the S3 bucket to use for testing:'
+---
+id: region
+q: 'Name of the S3 bucket region:'
+choices:
+    - eu-central-1
+    - eu-west-1
+    - us-east-1
+    - us-west-2
+---
+id: accessKeyId
+q: 'AWS Access Key Id to access the S3 bucket:'
+---
+id: secretKey
+q: 'Corresponding AWS Secret Access key:'
+---
+id: secretCode
+q: 'Secret code that users have to enter to create a data box:'

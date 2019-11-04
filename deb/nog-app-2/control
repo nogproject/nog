@@ -1,0 +1,8 @@
+Package: nog-app-2
+Version: {{ version }}
+Depends: nodejs, npm
+Section: web
+Priority: standard
+Architecture: amd64
+Maintainer: Steffen Prohaska <prohaska@zib.de>
+Description: Nog App 2 web application

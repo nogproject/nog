@@ -1,0 +1,8 @@
+Package: tartt
+Version: {{ version }}
+Depends: gawk, gnupg2, tar
+Section: utils
+Priority: standard
+Architecture: amd64
+Maintainer: Steffen Prohaska <prohaska@zib.de>
+Description: Tar Time Tree

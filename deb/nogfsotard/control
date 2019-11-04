@@ -1,0 +1,8 @@
+Package: nogfsotard
+Version: {{ version }}
+Depends: bash, git, libcap2-bin, nogfsoctl, nogfsoschd, tar, tartt, sudo
+Section: net
+Priority: standard
+Architecture: amd64
+Maintainer: Steffen Prohaska <prohaska@zib.de>
+Description: Nog FSO Tar daemon

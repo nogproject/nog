@@ -1,0 +1,82 @@
+{
+  "package": {
+    "authors": [
+      {
+        "email": "prohaska@zib.de",
+        "name": "Steffen Prohaska"
+      },
+      {
+        "email": "homberg@zib.de",
+        "name": "Ulrike Homberg"
+      }
+    ],
+    "dependencies": [
+      {
+        "name": "nogpy"
+      },
+      {
+        "name": "nogjobpy"
+      }
+    ],
+    "description": "Demo program that creates a simple photo gallery",
+    "frozen": [
+      {
+        "major": 0,
+        "minor": 0,
+        "name": "nogjobpy",
+        "patch": 11,
+        "programRegistry": "nog/packages",
+        "sha1": "06ae16ebf4a7f2bc9ac1cee0dedcd61e253fbdcc"
+      },
+      {
+        "major": 0,
+        "minor": 0,
+        "name": "nogpy",
+        "patch": 13,
+        "programRegistry": "nog/packages",
+        "sha1": "49a2f2243e3f9fe64f22945146d232c7f6cdc3c1"
+      }
+    ],
+    "name": "photo-gallery",
+    "readme": "README.md",
+    "version": {
+      "major": 0,
+      "minor": 0,
+      "patch": 40
+    }
+  },
+  "program": {
+    "args": [
+      "photo-gallery"
+    ],
+    "code": {
+      "files": [
+        "photo-gallery"
+      ]
+    },
+    "params": {
+      "maxHeight": 200,
+      "maxWidth": 200
+    },
+    "platform": {
+      "dependencies": [
+        {
+          "name": "python3",
+          "requirements": [
+            "requests",
+            "numpy",
+            "scipy",
+            "scikit-image",
+            "dateutils"
+          ]
+        }
+      ]
+    },
+    "runtime": {
+      "maxHeartbeatInterval_s": 2400,
+      "maxMem_MB": 2000,
+      "maxTotalDuration_s": 3000
+    }
+  },
+  "programRegistry": "nog/example_programs_2015"
+}

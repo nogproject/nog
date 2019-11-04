@@ -1,0 +1,159 @@
+<template name="fsoCatalogDiscoverGate">
+  {{#if isReady}}
+    {{#if mayAccess}}
+      {{> fsoCatalogDiscoverLayout layoutArgs}}
+    {{else}}
+      {{> denied}}
+    {{/if}}
+  {{/if}}
+</template>
+
+<template name="fsoCatalogDiscoverLayout">
+  <div class="row">
+    <div class="col-sm-12">
+      {{> fsoCatalogDiscoverPresenter discoverArgs}}
+    </div>
+  </div>
+</template>
+
+<template name="fsoCatalogDiscoverPresenter">
+  <div class="row">
+    <div class="col-sm-12">
+      <strong>Catalog {{title}}</strong>
+    </div>
+    <div class="col-sm-12">
+      {{> nogSearchInputForm searchInputArgs}}
+      {{> fsoCatalogTools toolsArgs}}
+    </div>
+  </div>
+  {{#if isCatalog}}
+    {{#if isReady }}
+      <div class="row">
+        <div class="col-sm-12">
+          <p class="text-right">{{hitCount}} hits</p>
+        </div>
+      </div>
+      <div class="row">
+        <div class="col-sm-4">
+          <h4>Available Fields</h4>
+          <ul class="list-unstyled">
+          {{#each f in availableFields}}
+          <li><small>{{f.name}}{{#if f.count}} ({{f.count}}){{/if}}</small>
+          {{> fsoCatalogFieldStatsView (fieldStatsArgs f)}}
+          </li>
+          {{/each}}
+          </ul>
+        </div>
+        <div class="col-sm-8">
+          {{> reactiveTable settings=tableSettings }}
+        </div>
+      </div>
+    {{else}}
+      Loading...
+    {{/if}}
+  {{else}}
+    {{> fsoCatalogWarningNoCatalog}}
+  {{/if}}
+</template>
+
+
+<template name="fsoCatalogWarningNoCatalog">
+  <div class="row">
+    <div class="col-sm-12 alert alert-warning">
+      <strong>Warning:</strong>
+      This view is only for catalog repositories, but this repository is not a
+      valid catalog.
+    </div>
+  </div>
+</template>
+
+<template name="fsoCatalogTools">
+  {{#if mayUpdate}}
+    <div class="row">
+      <div class="col-sm-12 text-right nog-catalog-vspace-bottom">
+        {{#if isUpdating}}
+          <button type="button" class="btn btn-default disabled">
+            {{isUpdating}}
+          </button>
+        {{else}}
+          <button type="button" class="btn btn-default js-catalog-update">
+            Update
+          </button>
+        {{/if}}
+      </div>
+    </div>
+  {{/if}}
+  {{#if updateLog}}
+    <div class="row">
+      <div class="col-sm-12">
+        <div class="alert alert-info alert-dismissable">
+          <a href="#" class="close" data-dismiss="alert"
+              aria-label="close">
+            &times;
+          </a>
+          <ul>
+            {{#each msg in updateLog}}
+              <li class="t-log-msg">{{msg}}</li>
+            {{/each}}
+          </ul>
+        </div>
+      </div>
+    </div>
+  {{/if}}
+</template>
+
+<template name="fsoCatalogTableMetaCell">
+  <a class="btn btn-link" role="button" data-toggle="collapse" href="#meta{{_id}}" aria-expanded="false" aria-controls="collapseExample">
+  {{title}}
+  </a>
+  <div class="collapse" id="meta{{_id}}">
+    <div class="well">
+      <dl>
+        <dt>Paths</dt>
+        <dd>
+          {{#each u in urls}}
+            {{#if u.url}}
+              <a href="{{u.url}}">{{u.path}}</a>{{u.detail}} <br>
+            {{else}}
+              {{u.path}} <br>
+            {{/if}}
+          {{/each}}
+        </dd>
+        {{#each m in metaAsList}}
+        <dt>{{m.key}}</dt>
+        <dd>{{m.val}}</dd>
+        {{/each}}
+      </dl>
+    </div>
+  </div>
+</template>
+
+<template name="fsoCatalogTableToolCell">
+  <button type="button" class="btn btn-xs btn-default js-catalog-copyPath"
+      data-toggle="tooltip" title="Copy path to clipboard"
+  >
+    <i class="fa fa-clipboard" aria-hidden="true"></i>
+  </button>
+</template>
+
+<template name="fsoCatalogFieldStatsView">
+  <small>, <a class="js-show-stats" href="#">top...</a></small>
+  {{#if isVisible}}
+    {{> fsoCatalogFieldStats}}
+  {{/if}}
+</template>
+
+<template name="fsoCatalogFieldStats">
+  {{#if isReady }}
+  <small>{{k}}, <a class="js-load-more" href="#">more...</a></small>
+  {{/if}}
+  <ul>
+  {{#if isReady }}
+    {{#each top in topk}}
+    <li><small>{{top.val}} ({{top.count}})</small></li>
+    {{/each}}
+  {{else}}
+    <li>Loading ...</li>
+  {{/if}}
+  </ul>
+</template>

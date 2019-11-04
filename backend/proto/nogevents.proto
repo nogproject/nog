@@ -1,0 +1,567 @@
+/*
+
+The `nogevents` protobuf package is the authoritative list of Nog events.
+
+Subsets are duplicated to packages `nogev.<topic>`, Go `<topic>pb`.  Example:
+`nogev.fsomain` in `internal/fsomainpb/`.
+
+Allocate IDs in blocks of 10.  The `x0` zeros should not be used to specify
+events but only to refer to a block, similar to IP network addresses.
+
+Check syntax with:
+
+```
+ddev protoc --go_out=/tmp backend/proto/nogevents.proto
+```
+
+Events use a subset of the `Event` protobuf fields.  See the following Go
+packages for the structure of valid events:
+
+ - fsomain: `../internal/fsomain/fsomain.go`.
+ - fsoregistry: `../internal/fsoregistry/pbevents/pbevents.go`.
+ - fsorepos: `../internal/fsorepos/pbevents/pbevents.go`.
+ - broadcast: `../internal/broadcast/pbevents/pbevents.go` and
+   `../internal/broadcast/broadcast.go`.
+ - workflows packages: `../internal/workflows/events/events.go` and individual
+   workflows in directories `backend/internal/workflows/...wf`.
+
+*/
+
+syntax = "proto3";
+
+package nogevents;
+option go_package = "nogeventspb";
+
+message Event {
+    enum Type {
+        EV_UNSPECIFIED = 0;
+
+        // reserved 1 to 9; // future common use
+
+        // reserved 10 to 19; // fsomain
+        EV_FSO_MAIN_INITIALIZED = 11;
+        EV_FSO_REGISTRY_ACCEPTED = 12;
+        EV_FSO_REGISTRY_CONFIRMED = 13;
+        EV_UNIX_DOMAIN_ADDED = 14;
+
+        // reserved 140 to 149; // snapshot
+        EV_SNAPSHOT_BEGIN = 141;
+        EV_SNAPSHOT_END = 142;
+
+        // reserved 20 to 29; // fsoregistry
+        // reserved 50 to 59; // fsoregistry
+        // reserved 130 to 139; // fsoregistry
+        EV_FSO_REGISTRY_ADDED = 21;
+        EV_FSO_ROOT_ADDED = 22;
+        EV_FSO_REPO_ACCEPTED = 23;
+        EV_FSO_REPO_ADDED = 24;
+        EV_FSO_REPO_REINIT_ACCEPTED = 25;
+        EV_FSO_ROOT_UPDATED = 26;
+        EV_FSO_REPO_ENABLE_GITLAB_ACCEPTED = 27;
+        EV_FSO_REPO_NAMING_UPDATED = 28;
+        EV_FSO_REPO_NAMING_CONFIG_UPDATED = 29;
+        EV_FSO_ROOT_REMOVED = 51;
+        EV_FSO_REPO_INIT_POLICY_UPDATED = 52;
+        // EV_FSO_SHADOW_REPO_MOVE_STARTED = 61; // from fsorepos
+        EV_FSO_REPO_MOVE_ACCEPTED = 53;
+        // EV_FSO_REPO_MOVED = 65; // from fsorepos
+        // EV_EPHEMERAL_WORKFLOWS_ENABLED = 91; // from workflows
+        EV_FSO_SPLIT_ROOT_ENABLED = 54;
+        EV_FSO_SPLIT_ROOT_DISABLED = 55;
+        EV_FSO_SPLIT_ROOT_PARAMS_UPDATED = 56;
+        EV_FSO_PATH_FLAG_SET = 57;
+        EV_FSO_PATH_FLAG_UNSET = 58;
+        EV_FSO_ROOT_ARCHIVE_RECIPIENTS_UPDATED = 59;
+        EV_FSO_ROOT_SHADOW_BACKUP_RECIPIENTS_UPDATED = 131;
+        // EV_FSO_FREEZE_REPO_STARTED_2 = 161; // from workflow freeze-repo
+        // EV_FSO_FREEZE_REPO_COMPLETED_2 = 164; // from workflow freeze-repo
+        // EV_FSO_UNFREEZE_REPO_STARTED_2 = 171; // from workflow unfreeze-repo
+        // EV_FSO_UNFREEZE_REPO_COMPLETED_2 = 174; // from workflow unfreeze-repo
+        EV_FSO_REPO_ACL_POLICY_UPDATED = 132;
+        // EV_FSO_ARCHIVE_REPO_STARTED = 181; // from workflow archive-repo
+        // EV_FSO_ARCHIVE_REPO_COMPLETED = 186; // from workflow archive-repo
+        // EV_FSO_UNARCHIVE_REPO_STARTED = 201; // from workflow unarchive-repo
+        // EV_FSO_UNARCHIVE_REPO_COMPLETED = 208; // from workflow unarchive-repo
+
+        // reserved 30 to 39; // fsorepos
+        // reserved 60 to 69; // fsorepos
+        // reserved 150 to 159; // fsorepos
+        EV_FSO_REPO_INIT_STARTED = 31;
+        EV_FSO_SHADOW_REPO_CREATED = 32;
+        EV_FSO_GIT_REPO_CREATED = 33;
+        EV_FSO_GIT_TO_NOG_CLONED = 34; // Currently unused.
+        EV_FSO_REPO_ERROR_SET = 35;
+        EV_FSO_REPO_ERROR_CLEARED = 36;
+        EV_FSO_ENABLE_GITLAB_ACCEPTED = 37;
+        EV_FSO_TARTT_REPO_CREATED = 38;
+        EV_FSO_SHADOW_BACKUP_REPO_CREATED = 39;
+        EV_FSO_SHADOW_BACKUP_REPO_MOVED = 63;
+        EV_FSO_SHADOW_REPO_MOVE_STARTED = 61;
+        EV_FSO_SHADOW_REPO_MOVED = 62;
+        EV_FSO_REPO_MOVE_STARTED = 64;
+        EV_FSO_REPO_MOVED = 65;
+        EV_FSO_ARCHIVE_RECIPIENTS_UPDATED = 66;
+        EV_FSO_SHADOW_BACKUP_RECIPIENTS_UPDATED = 67;
+        EV_FSO_FREEZE_REPO_STARTED = 68; // DEPRECATED: use workflow freeze-repo instead
+        EV_FSO_FREEZE_REPO_COMPLETED = 69; // DEPRECATED: use workflow freeze-repo instead
+        EV_FSO_UNFREEZE_REPO_STARTED = 151; // DEPRECATED: use workflow unfreeze-repo instead
+        EV_FSO_UNFREEZE_REPO_COMPLETED = 152; // DEPRECATED: use workflow unfreeze-repo instead
+        // EV_FSO_FREEZE_REPO_STARTED_2 = 161; // from workflow freeze-repo
+        // EV_FSO_FREEZE_REPO_COMPLETED_2 = 164; // from workflow freeze-repo
+        // EV_FSO_UNFREEZE_REPO_STARTED_2 = 171; // from workflow unfreeze-repo
+        // EV_FSO_UNFREEZE_REPO_COMPLETED_2 = 174; // from workflow unfreeze-repo
+        // EV_FSO_ARCHIVE_REPO_STARTED = 181; // from workflow archive-repo
+        // EV_FSO_ARCHIVE_REPO_COMPLETED = 186; // from workflow archive-repo
+        // EV_FSO_UNARCHIVE_REPO_STARTED = 201; // from workflow unarchive-repo
+        // EV_FSO_UNARCHIVE_REPO_COMPLETED = 208; // from workflow unarchive-repo
+
+        // reserved 40 to 49; // broadcast
+        EV_BC_FSO_MAIN_CHANGED = 41;
+        EV_BC_FSO_REGISTRY_CHANGED = 42;
+        EV_BC_FSO_REPO_CHANGED = 43;
+        EV_BC_FSO_GIT_REF_UPDATED = 44;
+
+        // reserved 70 to 79; // workflow shadow-repo-move
+        // EV_FSO_SHADOW_REPO_MOVE_STARTED = 61; // from fsorepos
+        // EV_FSO_SHADOW_REPO_MOVED = 62; // from fsorepos
+        EV_FSO_SHADOW_REPO_MOVE_STA_DISABLED = 71;
+        EV_FSO_SHADOW_REPO_MOVE_COMMITTED = 72;
+
+        // reserved 80 to 89; // workflow repo-move
+        // EV_FSO_REPO_MOVE_STARTED = 64; // from fsorepos
+        // EV_FSO_REPO_MOVED = 65; // from fsorepos
+        EV_FSO_REPO_MOVE_STA_RELEASED = 81;
+        EV_FSO_REPO_MOVE_APP_ACCEPTED = 82;
+        EV_FSO_REPO_MOVE_COMMITTED = 83;
+
+        // reserved 90 to 99; // ephemeral workflows
+        EV_EPHEMERAL_WORKFLOWS_ENABLED = 91;
+        EV_WORKFLOW_INDEX_SNAPSHOT_STATE = 92;
+
+        // reserved 100 to 109; // workflow du-root
+        EV_FSO_DU_ROOT_STARTED = 101;
+        EV_FSO_DU_UPDATED = 102;
+        EV_FSO_DU_ROOT_COMPLETED = 103;
+        EV_FSO_DU_ROOT_COMMITTED = 104;
+        EV_FSO_DU_ROOT_DELETED = 105;
+
+        // reserved 110 to 119; // workflow ping-registry
+        EV_FSO_PING_REGISTRY_STARTED = 111;
+        EV_FSO_SERVER_PINGED = 112;
+        EV_FSO_SERVER_PINGS_GATHERED = 113;
+        EV_FSO_PING_REGISTRY_COMPLETED = 114;
+        EV_FSO_PING_REGISTRY_COMMITTED = 115;
+        EV_FSO_PING_REGISTRY_DELETED = 116;
+
+        // reserved 120 to 129; // workflow split-root
+        EV_FSO_SPLIT_ROOT_STARTED = 121;
+        EV_FSO_SPLIT_ROOT_DU_APPENDED = 122;
+        EV_FSO_SPLIT_ROOT_DU_COMPLETED = 123;
+        EV_FSO_SPLIT_ROOT_SUGGESTION_APPENDED = 124;
+        EV_FSO_SPLIT_ROOT_ANALYSIS_COMPLETED = 125;
+        EV_FSO_SPLIT_ROOT_DECISION_APPENDED = 126;
+        EV_FSO_SPLIT_ROOT_COMPLETED = 127;
+        EV_FSO_SPLIT_ROOT_COMMITTED = 128;
+        EV_FSO_SPLIT_ROOT_DELETED = 129;
+
+        // reserved 160 to 169; // workflow freeze-repo
+        EV_FSO_FREEZE_REPO_STARTED_2 = 161;
+        EV_FSO_FREEZE_REPO_FILES_STARTED = 162;
+        EV_FSO_FREEZE_REPO_FILES_COMPLETED = 163;
+        EV_FSO_FREEZE_REPO_COMPLETED_2 = 164;
+        EV_FSO_FREEZE_REPO_COMMITTED = 165;
+        EV_FSO_FREEZE_REPO_DELETED = 166;
+
+        // reserved 170 to 179; // workflow unfreeze-repo
+        EV_FSO_UNFREEZE_REPO_STARTED_2 = 171;
+        EV_FSO_UNFREEZE_REPO_FILES_STARTED = 172;
+        EV_FSO_UNFREEZE_REPO_FILES_COMPLETED = 173;
+        EV_FSO_UNFREEZE_REPO_COMPLETED_2 = 174;
+        EV_FSO_UNFREEZE_REPO_COMMITTED = 175;
+        EV_FSO_UNFREEZE_REPO_DELETED = 176;
+
+        // reserved 180 to 199; // workflow archive-repo
+        EV_FSO_ARCHIVE_REPO_STARTED = 181;
+        EV_FSO_ARCHIVE_REPO_FILES_STARTED = 182;
+        EV_FSO_ARCHIVE_REPO_TARTT_COMPLETED = 183;
+        EV_FSO_ARCHIVE_REPO_SWAP_STARTED = 184;
+        EV_FSO_ARCHIVE_REPO_FILES_COMPLETED = 185;
+        EV_FSO_ARCHIVE_REPO_FILES_COMMITTED = 186;
+        EV_FSO_ARCHIVE_REPO_GC_COMPLETED = 187;
+        EV_FSO_ARCHIVE_REPO_COMPLETED = 188;
+        EV_FSO_ARCHIVE_REPO_COMMITTED = 189;
+        EV_FSO_ARCHIVE_REPO_DELETED = 191;
+
+        // reserved 200 to 219; // workflow unarchive-repo
+        EV_FSO_UNARCHIVE_REPO_STARTED = 201;
+        EV_FSO_UNARCHIVE_REPO_FILES_STARTED = 202;
+        EV_FSO_UNARCHIVE_REPO_TARTT_STARTED = 203;
+        EV_FSO_UNARCHIVE_REPO_TARTT_COMPLETED = 204;
+        EV_FSO_UNARCHIVE_REPO_FILES_COMPLETED = 205;
+        EV_FSO_UNARCHIVE_REPO_FILES_COMMITTED = 206;
+        EV_FSO_UNARCHIVE_REPO_GC_COMPLETED = 207;
+        EV_FSO_UNARCHIVE_REPO_COMPLETED = 208;
+        EV_FSO_UNARCHIVE_REPO_COMMITTED = 210;
+        EV_FSO_UNARCHIVE_REPO_DELETED = 211;
+
+        // reserved 220 to 230; // unixdomains
+        EV_UNIX_DOMAIN_CREATED = 221;
+        EV_UNIX_GROUP_CREATED = 222;
+        EV_UNIX_USER_CREATED = 223;
+        EV_UNIX_GROUP_USER_ADDED = 224;
+        EV_UNIX_GROUP_USER_REMOVED = 225;
+        EV_UNIX_USER_DELETED = 226;
+        EV_UNIX_GROUP_DELETED = 227;
+        EV_UNIX_DOMAIN_DELETED = 228;
+    }
+
+    // reserved 1 to 9; // common event header
+    Type event = 1;
+    bytes id = 2;
+    bytes parent = 3;
+    reserved 4 to 9; // future common header use
+
+    // reserved 10 to 19; // fsomain
+    string fso_main_name = 11;
+    string fso_registry_name = 12;
+    // string unix_domain_name = 111; // from unixdomains
+    // bytes unix_domain_id = 112; // from unixdomains
+
+    // reserved 20 to 29; // fsoregistry
+    // reserved 90 to 99; // fsoregistry
+    bytes repo_id = 25;
+    bytes repo_event_id = 29;
+    // bytes workflow_id = 71; // from workflows
+    // bytes ephemeral_workflows_id = 73; // from workflows
+    FsoRegistryInfo fso_registry_info = 21;
+    FsoRootInfo fso_root_info = 22;
+    FsoRepoInfo fso_repo_info = 23;
+    string fso_repo_reinit_reason = 24;
+    string gitlab_namespace = 26;
+    FsoRepoNaming fso_repo_naming = 27;
+    FsoRepoInitPolicy fso_repo_init_policy = 28;
+    FsoSplitRootParams fso_split_root_params = 91;
+    FsoPathFlag fso_path_flag = 92;
+    // repeated bytes fso_gpg_key_fingerprints = 82; // from fsorepos
+    // int32 status_code = 74; // from workflows
+    // RepoAclPolicy repo_acl_policy = 102; // from workflows
+
+    // reserved 30 to 39; // fsorepos
+    // reserved 80 to 89; // fsorepos
+    bytes registry_id = 81;
+    bytes registry_event_id = 38;
+    FsoRepoInitInfo fso_repo_init_info = 31;
+    FsoRepoInitInfo new_fso_repo_init_info = 39;
+    FsoShadowRepoInfo fso_shadow_repo_info = 32;
+    FsoArchiveRepoInfo fso_archive_repo_info = 36;
+    FsoShadowBackupRepoInfo fso_shadow_backup_repo_info = 37;
+    FsoGitRepoInfo fso_git_repo_info = 33;
+    FsoGitToNogInfo fso_git_to_nog_info = 34;
+    string fso_repo_error_message = 35;
+    // bytes workflow_id = 71; // from workflows
+    // bytes workflow_event_id = 72; // from workflows
+    repeated bytes fso_gpg_key_fingerprints = 82;
+    // int32 status_code = 74; // from workflows
+    // string status_message = 75; // from workflows
+    GitUser git_author = 83;
+    // TarttTarInfo tartt_tar_info = 103; // from workflows
+
+    // reserved 40 to 49; // broadcast
+    BcChange bc_change = 41;
+
+    // reserved 70 to 79; // workflows
+    // reserved 100 to 109; // workflows
+    bytes workflow_id = 71;
+    bytes workflow_event_id = 72;
+    // string fso_registry_name = 12; // from fsomain
+    // bytes registry_id = 81; // from fsorepos
+    // bytes registry_event_id = 38; // from fsorepos
+    // bytes repo_id = 25; // from fsoregistry
+    // bytes repo_event_id = 29; // from fsoregistry
+    // FsoRootInfo fso_root_info = 22; // from fsoregistry
+    // FsoRepoInitInfo fso_repo_init_info = 31; // from fsorepos
+    // FsoRepoInitInfo new_fso_repo_init_info = 39; // from fsorepos
+    // FsoShadowRepoInfo fso_shadow_repo_info = 32; // from fsorepos
+    // GitUser git_author = 83; // from fsorepos
+    bytes ephemeral_workflows_id = 73;
+    int32 status_code = 74;
+    string status_message = 75;
+    PathDiskUsage path_disk_usage = 76;
+    FsoSplitRootSuggestion fso_split_root_suggestion = 77;
+    FsoSplitRootDecision fso_split_root_decision = 78;
+    WorkflowIndexState workflow_index_state = 79;
+    string WorkingDir = 101;
+    RepoAclPolicy repo_acl_policy = 102;
+    // FsoArchiveRepoInfo fso_archive_repo_info = 36; // from fsorepos
+    TarttTarInfo tartt_tar_info = 103;
+
+    // reserved 110 to 119; // unixdomains
+    string unix_domain_name = 111;
+    bytes unix_domain_id = 112;
+    string unix_group = 113;
+    uint32 unix_gid = 114;
+    string unix_user = 115;
+    uint32 unix_uid = 116;
+}
+
+message FsoRegistryInfo {
+    string name = 1;
+}
+
+message FsoRootInfo {
+    string global_root = 1;
+    string host = 2;
+    string host_root = 3;
+    string gitlab_namespace = 4;
+}
+
+message FsoRepoInfo {
+    bytes id = 5;
+    string global_path = 1;
+    string creator_name = 2;
+    string creator_email = 3;
+    bool confirmed = 4;
+}
+
+message FsoRepoNaming {
+    string global_root = 1;
+    string rule = 2;
+    ConfigMap config = 3;
+}
+
+message ConfigMap {
+    repeated ConfigField fields = 1;
+}
+
+message ConfigField {
+    string key = 1;
+    oneof val {
+        double number = 2;
+        DoubleList numberList = 3;
+        string text = 4;
+        StringList textList = 5;
+        ConfigMap config = 6;
+        ConfigList configList = 7;
+        bytes json = 8;
+    }
+}
+
+message DoubleList {
+    repeated double vals = 1;
+}
+
+message StringList {
+    repeated string vals = 1;
+}
+
+message ConfigList {
+    repeated ConfigMap vals = 1;
+}
+
+enum SubdirTracking {
+    ST_UNSPECIFIED = 0;
+    ST_ENTER_SUBDIRS = 1;
+    ST_BUNDLE_SUBDIRS = 2;
+    ST_IGNORE_SUBDIRS = 3;
+    ST_IGNORE_MOST = 4;
+}
+
+message FsoRepoInitPolicy {
+    enum InitPolicy {
+        IPOL_UNSPECIFIED = 0;
+        IPOL_SUBDIR_TRACKING_GLOBLIST = 1;
+    }
+
+    message SubdirTrackingGlob {
+        string pattern = 1;
+        SubdirTracking subdir_tracking = 2;
+    }
+
+    string global_root = 1;
+    InitPolicy policy = 2;
+
+    // For IPOL_SUBDIR_TRACKING_GLOBLIST.
+    repeated SubdirTrackingGlob subdir_tracking_globlist = 3;
+}
+
+message FsoSplitRootParams {
+    reserved 1; // Potential future header.
+    string global_root = 2;
+    int32 max_depth = 3;
+    int64 min_disk_usage = 4;
+    int64 max_disk_usage = 5;
+}
+
+message FsoPathFlag {
+    // `Flag` values can be combined with bitwise or.
+    enum Flag {
+        PF_UNSPECIFIED = 0x00;
+        PF_DONT_SPLIT = 0x01;
+    }
+
+    reserved 1; // Potential future header.
+    string path = 2;
+    uint32 flags = 3;
+}
+
+message FsoRepoInitInfo {
+    string registry = 9;
+    string global_path = 1;
+    string creator_name = 2;
+    string creator_email = 3;
+    string file_host = 4;
+    string host_path = 5;
+    string gitlab_host = 6;
+    string gitlab_path = 7;
+    string git_to_nog_addr = 8;
+    SubdirTracking subdir_tracking = 10;
+}
+
+message FsoShadowRepoInfo {
+    string shadow_path = 1;
+    string new_shadow_path = 2;
+}
+
+message FsoArchiveRepoInfo {
+    string archive_url = 1;
+}
+
+message FsoShadowBackupRepoInfo {
+    string shadow_backup_url = 1;
+}
+
+message FsoGitRepoInfo {
+    int64 gitlab_project_id = 1;
+}
+
+message FsoGitToNogInfo {
+    string clone_path = 1;
+}
+
+message GitUser {
+    reserved 1; // Potential future header.
+    string name = 2;
+    string email = 3;
+}
+
+message BcChange {
+    bytes entity_id = 1;
+    bytes event_id = 2;
+    string git_ref = 3;
+    bytes git_commit = 4;
+}
+
+message PathDiskUsage {
+    string path = 1;
+    int64 usage = 2;
+}
+
+message FsoSplitRootSuggestion {
+    enum Suggestion {
+        S_UNSPECIFIED = 0;
+
+        // `S_SMALL_DIR` indicates a directory that is not yet a repo and
+        // remains a directory, because its size is `< minSize`.
+        S_SMALL_DIR = 1;
+
+        // `S_REPO` indicates a repo.
+        S_REPO = 2;
+
+        // `S_SMALL_REPO` indicates a repo that has children and could in
+        // principle be split, but its size is `<= maxSize`.
+        S_SMALL_REPO = 3;
+
+        // `S_DONT_SPLIT` indicates a path that is flagged as `DONT_SPLIT`.
+        S_DONT_SPLIT = 4;
+
+        // `S_REPO_CANDIDATE` indicates a repo candidate.
+        S_REPO_CANDIDATE = 5;
+    }
+
+    reserved 1; // Potential future header.
+    string path = 2;
+    Suggestion suggestion = 3;
+}
+
+message FsoSplitRootDecision {
+    enum Decision {
+        D_UNSPECIFIED = 0;
+        D_CREATE_REPO = 1;
+        D_NEVER_SPLIT = 2;
+        D_IGNORE_ONCE = 3;
+    }
+
+    reserved 1; // Potential future header.
+    string path = 2;
+    Decision decision = 3;
+}
+
+message WorkflowIndexState {
+    reserved 1; // Potential future header.
+
+    message DuRoot {
+        reserved 1; // Potential future header.
+        bytes workflow_id = 2;
+        bytes started_workflow_event_id = 3;
+        bytes completed_workflow_event_id = 4;
+        string global_root = 5;
+        string host = 6;
+        string host_root = 7;
+    }
+
+    message PingRegistry {
+        reserved 1; // Potential future header.
+        bytes workflow_id = 2;
+        bytes started_workflow_event_id = 3;
+        bytes completed_workflow_event_id = 4;
+    }
+
+    message SplitRoot {
+        reserved 1; // Potential future header.
+        bytes workflow_id = 2;
+        bytes started_workflow_event_id = 3;
+        bytes completed_workflow_event_id = 4;
+        string global_root = 5;
+        string host = 6;
+        string host_root = 7;
+    }
+
+    message FreezeRepo {
+        reserved 1; // Potential future header.
+        bytes workflow_id = 2;
+        bytes started_workflow_event_id = 3;
+        bytes completed_workflow_event_id = 4;
+        string global_path = 5;
+    }
+
+    message UnfreezeRepo {
+        reserved 1; // Potential future header.
+        bytes workflow_id = 2;
+        bytes started_workflow_event_id = 3;
+        bytes completed_workflow_event_id = 4;
+        string global_path = 5;
+    }
+
+    repeated DuRoot du_root = 2;
+    repeated PingRegistry ping_registry = 3;
+    repeated SplitRoot split_root = 4;
+    repeated FreezeRepo freeze_repo = 5;
+    repeated UnfreezeRepo unfreeze_repo = 6;
+}
+
+message RepoAclPolicy {
+    enum Policy {
+        P_UNSPECIFIED = 0;
+        P_NO_ACLS = 1;
+        P_PROPAGATE_ROOT_ACLS = 2;
+    }
+
+    reserved 1; // Potential future header.
+    Policy policy = 2;
+    FsoRootInfo fso_root_info = 3;
+}
+
+message TarttTarInfo {
+    reserved 1; // Potential future header.
+    string path = 2;
+}

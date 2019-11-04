@@ -1,0 +1,35 @@
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+
+if [ $# -gt 0 ]; then
+    case $1 in
+    -h|--help)
+        cat <<\EOF
+Usage:
+  nogapp2 [<env>]
+
+`nogapp2` runs the Nog App 2 Meteor web application.  `<env>` is a path to an
+environment configuration file.  The default is `/etc/nog-app-2/nogenv.sh`.
+EOF
+        exit 0
+        ;;
+    esac
+fi
+
+envSh="${1:-/etc/nog-app-2/nogenv.sh}"
+if [ -e "${envSh}" ]; then
+    echo "nogapp2: Using environment \`${envSh}\`."
+    source "${envSh}"
+fi
+
+chroot=
+if [[ -v NOG_USER ]]; then
+    echo "nogapp2: Running as user \`${NOG_USER}\`."
+    chroot="chroot --userspec=${NOG_USER} /"
+fi
+
+echo 'nogapp2: Starting Meteor application.'
+exec \
+${chroot} \
+env HOME=/ \
+node /usr/lib/nog-app-2/bundle/main.js

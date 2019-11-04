@@ -1,0 +1,45 @@
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+
+# This script may be called as described in "Debian Policy Manual" subsection
+# "Summary of ways maintainer scripts are called",
+# <https://www.debian.org/doc/debian-policy/ch-maintainerscripts.html#summary-of-ways-maintainer-scripts-are-called>.
+
+case "$1" in
+configure)
+    # Debconf uses unset variables.
+    set +o nounset
+    source /usr/share/debconf/confmodule
+
+    db_input medium nogfsorstd/user || true
+    db_go
+    db_get nogfsorstd/user
+    user="${RET}"
+
+    db_input medium nogfsorstd/group || true
+    db_go
+    db_get nogfsorstd/group
+    group="${RET}"
+
+    set -o nounset
+
+    # Add unprivileged daemon user.
+    addgroup --quiet --system "${group}" || true
+    adduser --quiet \
+        --system --ingroup "${group}" \
+        --home /nonexistent --no-create-home \
+        "${user}" || true
+
+    install -m 0755 -d /usr/lib/nogfsorstd
+    install -m 0750 -g "${group}" /bin/tar /usr/lib/nogfsorstd/tar
+    setcap cap_chown,cap_dac_override,cap_fowner=ep /usr/lib/nogfsorstd/tar
+;;
+
+abort-upgrade|abort-remove|abort-deconfigure)
+;;
+
+*)
+    echo >&2 "fatal: postinst called with unknown argument '$1'."
+    exit 1
+;;
+esac

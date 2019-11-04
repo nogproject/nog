@@ -1,0 +1,14 @@
+template(name='nogReprExampleView')
+  p This an example entry repr template.
+
+  if Template.subscriptionsReady
+    p Ready.  The entry has #{numOfTreeChildren} tree entries below it.
+  else
+    p Loading tree information...
+
+  p The tree data context is:
+  pre #{treeDataContext}
+
+
+template(name='nogReprExampleIcon')
+  i.fa.fa-paper-plane.fa-2x

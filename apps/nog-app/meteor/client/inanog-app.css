@@ -1,0 +1,38 @@
+body {
+    font-size: 15px;
+    font-family: 'Lato', sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Lato';
+    font-weight: 700;
+}
+
+h1 {
+    font-size: 200%;
+}
+
+h2 {
+    font-size: 175%;
+}
+
+h3 {
+    font-size: 150%;
+}
+
+pre, code {
+    font-family: 'Hack', monospace;
+}
+
+.table {
+    border-bottom: thin solid #ddd;
+}
+
+.nog-no-border {
+    border: none;
+}
+
+.nog-object-repr-img {
+    min-width: 50px;
+    max-width: 100%;
+}

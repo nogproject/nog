@@ -1,0 +1,211 @@
+# See `Makefile` for details.
+# vim: sw=8
+
+IS_CONTAINER := $(shell test -d /go && echo isContainer)
+
+ifndef IS_CONTAINER
+    $(error "This Makefile must be used inside the godev container.")
+endif
+
+# Semvers are maintained in a file, so that they can be kept in sync with the
+# changelog.  The build tag is received from `Makefile`, where it is determined
+# from the host Git workspace.
+NOGECHO_VERSION := $(shell \
+    grep '^nogecho:' versions.yml | cut -d : -f 2 | tr -d ' ' \
+)
+NOGECHOD_VERSION := $(shell \
+    grep '^nogechod:' versions.yml | cut -d : -f 2 | tr -d ' ' \
+)
+NOGFSOREGD_VERSION := $(shell \
+    grep '^nogfsoregd:' versions.yml | cut -d : -f 2 | tr -d ' ' \
+)
+NOGFSOSCHD_VERSION := $(shell \
+    grep '^nogfsoschd:' versions.yml | cut -d : -f 2 | tr -d ' ' \
+)
+NOGFSOSTAD_VERSION := $(shell \
+    grep '^nogfsostad:' versions.yml | cut -d : -f 2 | tr -d ' ' \
+)
+NOGFSOSTAUDOD_VERSION := $(shell \
+    grep '^nogfsostaudod:' versions.yml | cut -d : -f 2 | tr -d ' ' \
+)
+NOGFSOSTASVSD_VERSION := $(shell \
+    grep '^nogfsostasvsd:' versions.yml | cut -d : -f 2 | tr -d ' ' \
+)
+NOGFSORSTD_VERSION := $(shell \
+    grep '^nogfsorstd:' versions.yml | cut -d : -f 2 | tr -d ' ' \
+)
+NOGFSODOMD_VERSION := $(shell \
+    grep '^nogfsodomd:' versions.yml | cut -d : -f 2 | tr -d ' ' \
+)
+NOGFSOG2ND_VERSION := $(shell \
+    grep '^nogfsog2nd:' versions.yml | cut -d : -f 2 | tr -d ' ' \
+)
+NOGFSOCTL_VERSION := $(shell \
+    grep '^nogfsoctl:' versions.yml | cut -d : -f 2 | tr -d ' ' \
+)
+TARTT_VERSION := $(shell \
+    grep '^tartt:' versions.yml | cut -d : -f 2 | tr -d ' ' \
+)
+TARTT_STORE_VERSION := $(TARTT_VERSION)
+TARTT_IS_DIR_VERSION := $(TARTT_VERSION)
+
+# The build tag `static` is necessary to configure git2go to statically link
+# libgit2.  It does not imply static binaries.  The resulting binaries require
+# glibc during runtime.  The build tag `netgo`, which could be used to produce
+# fully static binaries as described in
+# <https://blog.docker.com/2016/09/docker-golang/>, cannot be used here,
+# because libgit2 uses `getaddrinfo()`, which requires glibc during runtime.
+#
+# Go 1.10 `-ldflags=<pkg>=`, see <https://golang.org/doc/go1.10#build>.
+GOFLAGS := \
+    -ldflags=github.com/nogproject/nog/backend/cmd/nogecho="-X=main.xVersion=$(NOGECHO_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -ldflags=github.com/nogproject/nog/backend/cmd/nogechod="-X=main.xVersion=$(NOGECHOD_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -ldflags=github.com/nogproject/nog/backend/cmd/nogfsoctl="-X=main.xVersion=$(NOGFSOCTL_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -ldflags=github.com/nogproject/nog/backend/cmd/nogfsog2nd="-X=main.xVersion=$(NOGFSOG2ND_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -ldflags=github.com/nogproject/nog/backend/cmd/nogfsoregd="-X=main.xVersion=$(NOGFSOREGD_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -ldflags=github.com/nogproject/nog/backend/cmd/nogfsoschd="-X=main.xVersion=$(NOGFSOSCHD_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -ldflags=github.com/nogproject/nog/backend/cmd/nogfsostad="-X=main.xVersion=$(NOGFSOSTAD_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -ldflags=github.com/nogproject/nog/backend/cmd/nogfsostaudod-fd="-X=main.xVersion=$(NOGFSOSTAUDOD_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -ldflags=github.com/nogproject/nog/backend/cmd/nogfsostasuod-fd="-X=main.xVersion=$(NOGFSOSTAUDOD_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -ldflags=github.com/nogproject/nog/backend/cmd/nogfsostaudod-path="-X=main.xVersion=$(NOGFSOSTAUDOD_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -ldflags=github.com/nogproject/nog/backend/cmd/nogfsostasududod="-X=main.xVersion=$(NOGFSOSTAUDOD_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -ldflags=github.com/nogproject/nog/backend/cmd/nogfsostasvsd="-X=main.xVersion=$(NOGFSOSTASVSD_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -ldflags=github.com/nogproject/nog/backend/cmd/nogfsorstd="-X=main.xVersion=$(NOGFSORSTD_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -ldflags=github.com/nogproject/nog/backend/cmd/nogfsodomd="-X=main.xVersion=$(NOGFSODOMD_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -ldflags=github.com/nogproject/nog/backend/cmd/tartt-store="-X=main.xVersion=$(TARTT_STORE_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -ldflags=github.com/nogproject/nog/backend/cmd/tartt-is-dir="-X=main.xVersion=$(TARTT_IS_DIR_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -ldflags=github.com/nogproject/nog/backend/cmd/tartt="-X=main.xVersion=$(TARTT_VERSION) -X=main.xBuild=$(BUILD_TAG)" \
+    -tags static
+
+# Use separate flags, because `go test` does not accept multiple `-ldflags`
+# arguments (last checked for Go 1.10.1).
+GOFLAGS_TEST := \
+    -tags static
+
+BINARIES_GO := \
+    nogecho nogechod \
+    nogfsoctl nogfsog2nd nogfsoregd nogfsoschd nogfsostad nogfsorstd \
+    nogfsostasududod nogfsostaudod-fd nogfsostasuod-fd nogfsostaudod-path \
+    nogfsostasvsd \
+    nogfsodomd \
+    tartt tartt-is-dir tartt-store \
+    test-git2go
+
+BINARIES_SH := \
+    git-archive-branch-dir \
+    git-for-each-ref-dir \
+    git-fso \
+    git-is-immutable-fso-stat-dir \
+    git-is-newer-branch-dir-duration \
+    git-receive-pack-get-owner \
+    git-receive-pack-sudo-owner \
+    git-rev-parse-branch-dir \
+    git-rev-parse-is-valid-branch-dir \
+    nogfsosdwbakd3 \
+    nogfsosdwgctd \
+    nogfsotard \
+    nogfsotargctd \
+    nogfsotarsecbakd \
+    nogfsotchd3 \
+    stat-dir-owner
+
+# `SRCDIRS` lists our dirs.
+SRCDIRS := ./backend/pkg/ ./backend/internal/ ./backend/cmd/
+
+# `GOPKGS` are the same dirs with Go's everything-below path pattern.
+GOPKGS := $(addsuffix ...,$(SRCDIRS))
+
+# Restrict find to our dirs, ignoring `.proto` files below `vendor/`.
+PROTOS := $(shell find $(SRCDIRS) -name '*.proto')
+PB_GOS := $(addsuffix .pb.go,$(basename $(PROTOS)))
+
+.PHONY: all
+all: devcerts install
+
+.PHONY: install
+install: pbgo
+	@echo '    GO INSTALL'
+	go install $(GOFLAGS) -v $(GOPKGS)
+
+.PHONY: binaries
+binaries: pbgo
+	@echo '    GO INSTALL (rebuild)'
+	go install $(GOFLAGS) -v -a $(GOPKGS)
+	@echo '    CP $(addprefix product/bin/, $(BINARIES_GO))'
+	@tar -C /go/bin --xform 's,^,product/bin/,' -cf- $(BINARIES_GO) \
+	| tar -xvf-
+	@echo '    CP $(addprefix product/bin/, $(BINARIES_SH))'
+	@tar -C backend/bin --xform 's,^,product/bin/,' -cf- $(BINARIES_SH) \
+	| tar -xvf-
+
+.PHONY: deb deb-from-product
+deb: binaries deb-from-product
+deb-from-product:
+	@./tools/bin/make-deb
+
+.PHONY: devcerts
+devcerts: /nog/ssl/certs /nog/jwt/tokens
+
+/nog/ssl/certs: tools/lib/devcerts
+	@echo '   GEN /nog/ssl/certs'
+	./tools/bin/gen-devcerts
+	@touch /nog/ssl/certs
+
+/nog/jwt/tokens: /nog/ssl/certs
+	@echo '   GEN /nog/jwt/tokens'
+	./tools/bin/gen-devjwts
+	@touch /nog/jwt/tokens
+
+# Remove all `.pb.go` to reliably handle renames.  If we deleted only our
+# `PB_GOS`, `make clean && make` could see old files.
+.PHONY: clean
+clean:
+	@echo '    GO CLEAN'
+	go clean $(GOFLAGS) -i $(GOPKGS)
+	@echo '    RM $(addsuffix .../*.pb.go,$(SRCDIRS))'
+	@find $(SRCDIRS) -name '*.pb.go' -exec rm -v '{}' ';'
+	@echo '    RM vendor/'
+	@rm -rf backend/vendor/
+	@echo '    RM /nog/ssl/certs'
+	@rm -rf /nog/ssl/certs/ /nog/ssl/ca/
+
+.PHONY: gogen
+gogen:
+	@echo '    GO GENERATE'
+	go generate $(GOPKGS)
+
+.PHONY: vet
+vet:
+	@echo '    GO VET'
+	go vet $(GOFLAGS_TEST) $(GOPKGS)
+
+.PHONY: test
+test:
+	@echo '    GO TEST'
+	go test $(GOFLAGS_TEST) $(GOPKGS)
+
+.PHONY: test-t
+test-t:
+	@echo '    SHARNESS t/'
+	cd backend/t && ./test-all.sh
+
+.PHONY: errcheck
+errcheck:
+	@echo '    ERRCHECK'
+	errcheck $(GOFLAGS_TEST) $(GOPKGS)
+
+# Each `.pb.go` file depends on all `.proto` files to handle dependencies with
+# proto-to-proto includes.
+#
+# `protoc` compiles all `.proto` files in a directory at once to support
+# splitting packages into multiple `.proto` files.  Previous files are removed
+# before to support reorganizing `.proto` files in a directory without `make
+# clean`.
+#
+# See <https://www.gnu.org/software/make/manual/make.html#Automatic-Variables>
+# for special variables.
+pbgo: $(PB_GOS)
+
+$(PB_GOS): $(PROTOS)
+	@echo "    PROTOC $(@D)/"
+	cd $(@D) && rm -f *.pb.go && protoc --go_out=plugins=grpc:. *.proto

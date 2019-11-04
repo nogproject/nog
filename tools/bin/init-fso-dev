@@ -1,0 +1,286 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+if ! [ -d '/go' ]; then
+    echo 'switching to container'
+    set -x
+    exec docker-compose run --rm godev ./tools/bin/init-fso-dev
+fi
+
+echo '    MKDIR /nogfso/{archive,tape,backup}/tartt'
+mkdir -p /nogfso/{archive,tape,backup}/tartt
+chown ngftar:ngftar /nogfso/{archive,tape,backup}/tartt
+chmod 0750 /nogfso/{archive,tape,backup}/tartt
+
+echo '    MKDIR /nogfso/var/lib/nogfsotard'
+mkdir -p /nogfso/var/lib/nogfsotard
+chown ngftar /nogfso/var/lib/nogfsotard
+
+echo '    MKDIR /nogfso/backup/shadow'
+mkdir -p /nogfso/backup/shadow
+chown ngfbak:ngfbak /nogfso/backup/shadow
+chmod 0750 /nogfso/backup/shadow
+
+echo '    MKDIR /nogfso/var/lib/nogfsosdwbakd3'
+mkdir -p /nogfso/var/lib/nogfsosdwbakd3
+chown ngfbak /nogfso/var/lib/nogfsosdwbakd3
+
+echo '    MKDIR /orgfs2/archive-repo-spool'
+install -o root -g ngfsta -m 0770 -d /orgfs2/archive-repo-spool
+
+echo '    MKDIR /orgfs2/unarchive-repo-spool'
+install -o root -g ngfsta -m 0770 -d /orgfs2/unarchive-repo-spool
+
+echo '    INIT domain'
+set -x
+
+if ! nogfsoctl get unix-domain EXDOM | grep '^domainName: EXDOM'; then
+    nogfsoctl init unix-domain --no-vid EXDOM
+else
+    : kept domain
+fi
+
+echo '    INIT registry'
+set -x
+nogfsoctl init registry --no-vid exreg
+nogfsoctl registry exreg --no-vid enable-propagate-root-acls
+sleep 1
+
+vid=$(
+    nogfsoctl init root exreg --no-vid \
+        --host=files.example.com --gitlab-namespace=localhost/root \
+        /example/files /usr/local
+)
+if ! nogfsoctl get repos exreg | grep /example/files/bin; then
+    nogfsoctl init repo --author="A U Thor <author@example.com>" \
+        exreg --vid="${vid}" /example/files/bin
+fi
+
+vid=$(
+    nogfsoctl init root --no-vid exreg \
+        --host=files.example.com \
+        /example/share /usr/share
+)
+if ! nogfsoctl get repos exreg | grep /example/share/pam; then
+    nogfsoctl init repo --author="A U Thor <author@example.com>" \
+        exreg --vid="${vid}" /example/share/pam
+fi
+
+vid=$(
+    nogfsoctl init root exreg --no-vid \
+        --host=files.example.com \
+        /example/exinst/data/projects/foo /exinst/data/projects/foo
+)
+vid=$(
+    nogfsoctl root exreg --vid="${vid}" /example/exinst/data/projects/foo \
+        set-repo-naming Stdtools2017
+)
+
+vid=$(
+    nogfsoctl init root exreg --no-vid \
+        --host=files.example.com \
+        /example/exinst/data/data/foo /exinst/data/data/foo
+)
+vid=$(
+    nogfsoctl root exreg --vid="${vid}" /example/exinst/data/data/foo \
+        set-repo-naming PathPatterns '{
+            "patterns": [
+                "superrepo .",
+                    "repo overview",
+                    "enter data",
+                    "repo data/*",
+                "superrepo data2",
+                    "repo data2/*",
+                    "ignore *"
+            ]
+        }' \
+    | awk '{ print $2 }'
+)
+
+vid=$(
+    nogfsoctl root exreg --vid="${vid}" /example/exinst/data/data/foo \
+        set-init-policy subdir-tracking-globlist \
+        'bundle-subdirs:.' \
+        'bundle-subdirs:data2' \
+        'enter-subdirs:data*/2000*' \
+        'bundle-subdirs:data*/3000*' \
+        'ignore-subdirs:data*/4000*' \
+        'ignore-most:data*/5000*' \
+    | awk '{ print $2 }'
+)
+
+vid=$(
+    nogfsoctl init root exreg --no-vid \
+        --host=files.example.com \
+        /example/orgfs/srv/lm1/ag-alice /orgfs/srv/lm1/ag-alice
+)
+vid=$(
+    nogfsoctl root exreg --vid="${vid}" /example/orgfs/srv/lm1/ag-alice \
+        set-repo-naming SubdirLevel '{"level": 2}'
+)
+
+vid=$(
+    nogfsoctl init root exreg --no-vid \
+        --host=files.example.com \
+        /example/orgfs/srv/lm1/ag-bob /orgfs/srv/lm1/ag-bob
+)
+vid=$(
+    nogfsoctl root exreg --vid="${vid}" /example/orgfs/srv/lm1/ag-bob \
+        set-repo-naming SubdirLevel '{"level": 2}'
+)
+
+vid=$(
+    nogfsoctl init root exreg --no-vid \
+        --host=files.example.com \
+        /example/orgfs/org/ag-alice/projects /orgfs/org/ag-alice/projects
+)
+vid=$(
+    nogfsoctl root exreg --vid="${vid}" /example/orgfs/org/ag-alice/projects \
+        set-repo-naming SubdirLevel '{"level": 2}'
+)
+
+vid=$(
+    nogfsoctl init root exreg --no-vid \
+        --host=files.example.com \
+        /example/orgfs/org/ag-bob/projects /orgfs/org/ag-bob/projects
+)
+vid=$(
+    nogfsoctl root exreg --vid="${vid}" /example/orgfs/org/ag-bob/projects \
+        set-repo-naming SubdirLevel '{"level": 2}'
+)
+
+while read -r user ou path; do
+    if [ -z "${path}" ]; then
+        continue
+    fi
+
+    # Initialize shadow permissions similar to bcpfs-perms to allow non-root
+    # nogfsostad to create files, with SGID group propagation for group quota.
+    mkdir -p /nogfso/shadow/${path}
+    chown ${user}:org_${ou} /nogfso/shadow/${path}
+    chmod u=rwx,g=s,o=- /nogfso/shadow/${path}
+
+    vid=$(
+        nogfsoctl init root exreg --no-vid \
+            --host=files.example.com \
+            /example/orgfs2/${path} /orgfs2/data/${path}
+    )
+    vid=$(
+        nogfsoctl root exreg --vid="${vid}" /example/orgfs2/${path} \
+            set-repo-naming 'PathPatterns' '{"patterns": ["superrepo .", "repo *"]}'
+    )
+done <<< '
+ngfsta2 ag-alice srv/tem-505/ag-alice
+ngfsta2 ag-alice org/ag-alice/projects
+
+ngfsta2 ag-bob srv/tem-505/ag-bob
+
+ngfsta3 ag-charly srv/tem-505/ag-charly
+'
+
+set +x
+
+echo '    INFO'
+nogfsoctl info exreg
+
+
+echo '    MKDIR'
+mkdir -p /exinst/data/projects/foo/{timeless,_ignore,.git}
+mkdir -p /exinst/data/projects/foo/201{6..8}/{timeful-year,timeful-month_01,_ignore,.git}
+mkdir -p /exinst/data/projects/foo/201{4,5}/{timeful-year,01_timeful-month,_ignore,.git}
+mkdir -p /exinst/data/projects/foo/2013/{2013_timeful-year,2013-01_timeful-month,_ignore,.git}
+
+mkdir -p /orgfs/srv/lm1/ag-alice/201{5,6,7,8}/{x,y,z}-images_{01..05}
+touch /orgfs/srv/lm1/ag-alice/201{5,6,7,8}/{x,y,z}-images_{01..05}/img-{01..04}.jpg
+mkdir -p /orgfs/srv/lm1/ag-bob/201{5,6,7,8}/{u,v,w}-images_{01..05}
+touch /orgfs/srv/lm1/ag-bob/201{5,6,7,8}/{u,v,w}-images_{01..05}/img-{01..04}.jpg
+
+mkdir -p /orgfs/org/ag-alice/projects/prj-{A..G}/detail-{01..10}
+touch /orgfs/org/ag-alice/projects/prj-{A..G}/detail-{01..10}/data-{01..04}.bin
+mkdir -p /orgfs/org/ag-bob/projects/prj-{A..G}/detail-{01..10}
+touch /orgfs/org/ag-bob/projects/prj-{A..G}/detail-{01..10}/data-{01..04}.bin
+
+mkdir -p /exinst/data/data/foo/overview
+mkdir -p /exinst/data/data/foo/data/{1000,2000,3000,4000,5000}/{,sub}
+touch /exinst/data/data/foo/data/{1000,2000,3000,4000,5000}/{,sub/}x.dat
+mkdir -p /exinst/data/data/foo/data2/{1000,2000,3000,4000,5000}/{,sub}
+touch /exinst/data/data/foo/data2/{1000,2000,3000,4000,5000}/{,sub/}y.dat
+mkdir -p /exinst/data/data/foo/ignore/
+mkdir -p /exinst/data/data/foo/ignore/{a,b,c}
+mkdir -p /exinst/data/data/foo/ignore/{a,b,c}/{1,2,3}
+
+
+echo '    BCPFS-PERMS'
+mkdir -p /orgfs2/data
+bcpfs-perms apply
+
+while read -r user path; do
+    if [ -z "${path}" ]; then
+        continue
+    fi
+    su ${user} -c "mkdir -p /orgfs2/data/${path}/images-{01..20}/{,sub}"
+    su ${user} -c "touch /orgfs2/data/${path}/images-{01..20}/{,sub}/img-{01..04}.jpg"
+done <<<'
+alice srv/tem-505/ag-alice
+alice org/ag-alice/projects
+
+bob srv/tem-505/ag-bob
+
+charly srv/tem-505/ag-charly
+'
+
+echo '    INIT doc'
+set -x
+
+vid=$(nogfsoctl init root exreg --no-vid --host=files.example.com /example/nog /orgfs/nog)
+vid=$(nogfsoctl root exreg --vid="${vid}" /example/nog set-repo-naming SubdirLevel '{"level": 2}')
+
+mkdir -p /orgfs/nog/{pub,org}/doc
+echo 'pub [foo](./foo.md), [bar](./bar.md)' >/orgfs/nog/pub/doc/index.md
+echo '[index](./index.md)' >/orgfs/nog/pub/doc/foo.md
+echo '[index](./index.md)' >/orgfs/nog/pub/doc/bar.md
+
+echo 'org [foo](./foo.md), [bar](./bar.md)' >/orgfs/nog/org/doc/index.md
+echo '[index](./index.md)' >/orgfs/nog/org/doc/foo.md
+echo '[index](./index.md)' >/orgfs/nog/org/doc/bar.md
+
+if ! nogfsoctl get repos exreg | grep /example/nog/pub/doc; then
+    nogfsoctl init repo --author="A U Thor <author@example.com>" exreg --no-vid /example/nog/pub/doc
+    sleep 5  # Give nog-app time to see the new repo.
+fi
+repoId=$(nogfsoctl get repos exreg | grep /example/nog/pub/doc | cut -d '"' -f 4)
+nogfsoctl refresh content --author="A U Thor <author@example.com>" ${repoId}
+sleep 3  # Give `refresh content` time to complete.
+
+cd /tmp
+git clone -b master-content /nogfso/shadow/orgfs/nog/pub/doc/${repoId}.fso ${repoId}
+cd ${repoId}
+touch {index,foo,bar}.md
+git add -- {index,foo,bar}.md
+git config user.name 'A U Thor'
+git config user.email 'author@example.com'
+git commit -m 'enable content tracking for some .md files' || true
+git push origin master-content
+nogfsoctl refresh content --author="A U Thor <author@example.com>" ${repoId}
+
+if ! nogfsoctl get repos exreg | grep /example/nog/org/doc; then
+    nogfsoctl init repo --author="A U Thor <author@example.com>" exreg --no-vid /example/nog/org/doc
+    sleep 5  # Give nog-app time to see the new repo.
+fi
+repoId=$(nogfsoctl get repos exreg | grep /example/nog/org/doc | cut -d '"' -f 4)
+nogfsoctl refresh content --author="A U Thor <author@example.com>" ${repoId}
+sleep 3  # Give `refresh content` time to complete.
+
+cd /tmp
+git clone -b master-content /nogfso/shadow/orgfs/nog/org/doc/${repoId}.fso ${repoId}
+cd ${repoId}
+touch {index,foo,bar}.md
+git add -- {index,foo,bar}.md
+git config user.name 'A U Thor'
+git config user.email 'author@example.com'
+git commit -m 'enable content tracking for some .md files' || true
+git push origin master-content
+nogfsoctl refresh content --author="A U Thor <author@example.com>" ${repoId}
+
+echo OK

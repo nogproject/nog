@@ -1,0 +1,30 @@
+{
+  "package": {
+    "authors": [
+      {
+        "email": "prohaska@zib.de",
+        "name": "Steffen Prohaska"
+      }
+    ],
+    "description": "Useful files when getting started with nog",
+    "name": "nog-starter-pack",
+    "readme": "README.md",
+    "version": {
+      "major": 0,
+      "minor": 0,
+      "patch": 5
+    },
+    "content": {
+      "files": [
+        "bin/nog",
+        "bin/nog-post-tree-json",
+        "bin/sign-req",
+        "bin/stdtools-repo-to-nog-tree-json",
+        "file-listing",
+        "photo-gallery-simple",
+        "nog.py"
+      ]
+    }
+  },
+  "programRegistry": "nog/packages"
+}

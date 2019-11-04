@@ -1,0 +1,8 @@
+<template name="nogOneWorkspaceResult">
+  <div class="panel-body panel-collapse collapse js-collapse"
+    id="collapse-{{child.id}}">
+    {{#if isVisible}}
+      {{> nogReprMarkdownFileView child.child}}
+    {{/if}}
+  </div>
+</template>

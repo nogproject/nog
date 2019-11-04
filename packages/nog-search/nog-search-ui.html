@@ -1,0 +1,99 @@
+<template name='EasySearch.NogComponent'>
+  <div>
+  {{#unless inputIsEmpty}}
+    {{#if numHitsTotal}}
+      {{numHitsCurrent}} of {{numHitsTotal}} results
+      {{#if isSearching}}
+        &nbsp; ... searching
+      {{/if}}
+    {{else}}
+      No results
+    {{/if}}
+  {{else}}
+    {{#if isSearching}}
+      Searching ...
+    {{/if}}
+  {{/unless}}
+  </div>
+</template>
+
+
+<template name='searchSettings'>
+  <p class='help-block'>
+    Search aliases can be used to replace frequently searched strings. The name
+    should be meaningful to you. The string must be a valid search string that
+    produces the desired results. To apply the aliases, they need to be
+    covered by double curly braces '&lbrace;&lbrace;.&rbrace;&rbrace;' in the
+    search input.
+  </p>
+  <p class='help-block'>
+    Example: create an alias with name 'images' and string 'png jpg tif'; Then,
+    type '&lbrace;&lbrace;images&rbrace;&rbrace;' into the search input instead
+    of 'png jpg tif'.
+  </p>
+
+  <table class='table table-condensed nog-search-table-no-border'>
+    <thead>
+      <tr class='nog-search-alias-thr'>
+        <th class='nog-search-alias-th-icon nog-search-table-no-border'>
+            <button type='button'
+                class='btn btn-default btn-xs pull-right js-search-alias-add'>
+              <span class='fa fa-plus'></span>
+            </button>
+        </th>
+        <th class='nog-search-alias-th-name'>
+          <label> Alias name </label>
+          <input class='form-control js-search-alias-name' type='text'>
+        </th>
+        <th class='nog-search-alias-th-string'>
+          <label> Alias string </label>
+          <input class='form-control js-search-alias-string' type='text'>
+        </th>
+        <th class='nog-search-table-no-border'>
+        </th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each alias in aliases}}
+        <tr id={{alias.aliasName}}>
+          <td class='nog-search-table-no-border'>
+              <button type='button' class='btn btn-default btn-xs pull-right
+                  js-search-alias-edit'>
+                {{#if alias.isEditing}}
+                  <span class='fa fa-check-square-o'></span>
+                {{else}}
+                  <span class='fa fa-pencil-square-o'></span>
+                {{/if}}
+              </button>
+          </td>
+          <td>
+            {{#if alias.isEditing}}
+              <pre contenteditable="true" class='editName
+                  nog-search-table-pre'>{{alias.aliasName}}</pre>
+            {{else}}
+              <div class='nog-search-alias-td'>
+                {{alias.aliasName}}
+              </div>
+            {{/if}}
+          </td>
+          <td>
+            {{#if alias.isEditing}}
+              <pre contenteditable="true" class='editString
+                nog-search-table-pre'>{{alias.aliasString}}</pre>
+            {{else}}
+              <div class='nog-search-alias-td'>
+                {{alias.aliasString}}
+              </div>
+            {{/if}}
+          </td>
+          <td class='nog-search-table-no-border'>
+              <button type='button'
+                  class='btn btn-default btn-xs js-search-alias-delete'>
+                <span class='fa fa-minus'></span>
+              </button>
+          </td>
+        </tr>
+      {{/each}}
+    </tbody>
+  </table>
+</template>

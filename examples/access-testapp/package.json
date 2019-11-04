@@ -1,0 +1,24 @@
+{
+  "name": "nog-access-testapp",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "meteor run --settings _private/settings.json",
+    "settings": "\"$(git rev-parse --show-toplevel)\"/tools/bin/readlink -f _private/settings.json",
+    "test": "set -x && meteor npm run test-packages-headless",
+    "ls-test-packages": "grep -i ontest packages/*/package.js | cut -d / -f 2 | grep -v nog-test",
+    "test-packages-watch": "set -x && meteor test-packages --driver-package=practicalmeteor:mocha --extra-packages mquandalle:jade@0.4.9 --settings _private/settings.json $(meteor npm run ls-test-packages | grep ^nog-)",
+    "test-packages-headless": "set -x && TEST_BROWSER_DRIVER=chrome meteor --once test-packages --driver-package meteortesting:mocha --extra-packages mquandalle:jade@0.4.9 --settings _private/settings.json $(meteor npm run ls-test-packages | grep ^nog-)"
+  },
+  "dependencies": {
+    "@babel/runtime": "^7.3.4",
+    "babel-runtime": "^6.23.0",
+    "bcrypt": "^3.0.4",
+    "meteor-node-stubs": "^0.4.1"
+  },
+  "devDependencies": {
+    "chai": "^4.2.0",
+    "chromedriver": "^2.46.0",
+    "selenium-webdriver": "^3.6.0"
+  }
+}

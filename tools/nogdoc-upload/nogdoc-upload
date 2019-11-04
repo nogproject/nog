@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+
+from os.path import exists
+import os
+import nog
+import pystache
+
+# Support overriding the repo from the environment, like:
+#
+#     NOGDOC_REPO=sprohaska/doc ./tools/nogdoc-upload/nogdoc-upload
+#
+REPO_NAME = os.environ.get('NOGDOC_REPO', 'nog/doc')
+
+# Use `template` to apply pystache on the input file with the fields in
+# `template` as the context, i.e. `{{{key}}}` in the input will be expanded to
+# `template[key]`.
+
+DOCS = [
+    {
+        'path': 'nogdoc/index.md',
+        'target': 'index.md',
+        'description': 'Documentation index'
+    }, {
+        'path': 'nogdoc/howto-upload.md',
+        'target': 'howto-upload.md',
+        'description': 'How to upload and share files'
+    }, {
+        'path': 'nogdoc/howto-organize-data.md',
+        'target': 'howto-organize-data.md',
+        'description': 'Suggestions how to organize project data'
+    }, {
+        'path': 'nogdoc/tutorial-ui.md',
+        'target': 'tutorial-ui.md',
+        'description': 'Getting started with analysis programs in the web UI'
+    }, {
+        'path': 'nogdoc/tutorial-rest.md',
+        'target': 'tutorial-rest.md',
+        'description': 'Introduction to the REST API'
+    }, {
+        'path': 'nogdoc/tutorial-nogpy.md',
+        'target': 'tutorial-nogpy.md',
+        'description': 'Introduction to the Python REST API wrapper'
+    }, {
+        'path': 'nogdoc/tutorial-nogpy-workspace.md',
+        'target': 'tutorial-nogpy-workspace.md',
+        'description': 'Introduction to manipulating a workspace from Python',
+        'template': {
+            'code': open('nogpackages/nog-starter-pack/file-listing').read()
+        }
+    }, {
+        'path': 'nogdoc/tutorial-python-api-basics.md',
+        'target': 'tutorial-python-api-basics.md',
+        'description': 'Introduction to using SciPy with Nog',
+        'template': {
+            'code': open(
+                'nogpackages/nog-starter-pack/photo-gallery-simple').read()
+        }
+    }, {
+        'path': 'nogdoc/tutorial-coding.md',
+        'target': 'tutorial-coding.md',
+        'description': 'Introduction to developing programs for the web UI',
+        'template': {
+            'code': open('nogpackages/photo-gallery/photo-gallery').read()
+        }
+    }, {
+        'path': 'apidoc.md',
+        'description': 'REST v1 API documentation'
+    }, {
+        'path': 'nogdoc/api-transition-v0-v1.md',
+        'target': 'api-transition-v0-v1.md',
+        'description': 'Transition from API v0 to API v1'
+    }, {
+        'path': 'devdoc.md',
+        'description': 'API reference for core nog Meteor app developers'
+    }
+]
+
+
+def getOrCreateTree(root, filename):
+    dirs = filename.split('/')[0:-1]
+    resultTree = root
+
+    for d in dirs:
+        try:
+            resultTree = next(resultTree.trees(d))
+        except StopIteration:
+            newTree = nog.Tree()
+            newTree.name = d
+            resultTree.append(newTree)
+            resultTree = newTree
+
+    return resultTree
+
+
+def main():
+    verifyIsToplevel()
+
+    print("Uploading to repo `{0}`.".format(REPO_NAME))
+    try:
+        workspace = nog.openRepo(REPO_NAME)
+    except RuntimeError:
+        print('Creating repo: ' + REPO_NAME)
+        workspace = nog.createRepo(REPO_NAME)
+
+    master = workspace.getMaster()
+    root = nog.Tree()
+
+    for d in DOCS:
+        filename = d['path']
+        target = d.get('target', filename)
+        if os.path.isfile(filename):
+            print("Adding " + filename + " ---> " + target)
+            tree = getOrCreateTree(root, target)
+            with open(filename, "r") as f:
+                fileContent = f.read()
+            obj = nog.Object()
+            obj.name = os.path.basename(target)
+            template = d.get('template', None)
+            if template:
+                fileContent = pystache.render(fileContent, template)
+            obj.text = fileContent
+            obj.meta['description'] = d['description']
+            tree.append(obj)
+        else:
+            raise RuntimeError("File not found: " + filename)
+
+    workspace.commitTree(
+        subject="Update documentation", tree=root, parent=master.sha1)
+
+
+def verifyIsToplevel():
+    toplevel_indicators = [
+        'CHANGELOG.md',
+        'README.md',
+        'nogdoc',
+        'nogpackages'
+    ]
+    for t in toplevel_indicators:
+        if not exists(t):
+            msg = (
+                "Missing '{}'.  This script must be run from the toplevel nog "
+                "directory."
+            )
+            raise RuntimeError(msg.format(t))
+
+main()

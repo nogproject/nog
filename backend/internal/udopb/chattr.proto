@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package udo;
+option go_package = "udopb";
+
+service UdoChattr {
+    rpc UdoChattrSetImmutable(UdoChattrSetImmutableI) returns (UdoChattrSetImmutableO);
+    rpc UdoChattrUnsetImmutable(UdoChattrUnsetImmutableI) returns (UdoChattrUnsetImmutableO);
+    rpc UdoChattrTreeSetImmutable(UdoChattrTreeSetImmutableI) returns (UdoChattrTreeSetImmutableO);
+    rpc UdoChattrTreeUnsetImmutable(UdoChattrTreeUnsetImmutableI) returns (UdoChattrTreeUnsetImmutableO);
+}
+
+message UdoChattrSetImmutableI {
+    reserved 1; // Potential future header.
+    string username = 2;
+    string path = 3;
+}
+
+message UdoChattrSetImmutableO {}
+
+message UdoChattrUnsetImmutableI {
+    reserved 1; // Potential future header.
+    string username = 2;
+    string path = 3;
+}
+
+message UdoChattrUnsetImmutableO {}
+
+message UdoChattrTreeSetImmutableI {
+    reserved 1; // Potential future header.
+    string username = 2;
+    string path = 3;
+}
+
+message UdoChattrTreeSetImmutableO {}
+
+message UdoChattrTreeUnsetImmutableI {
+    reserved 1; // Potential future header.
+    string username = 2;
+    string path = 3;
+}
+
+message UdoChattrTreeUnsetImmutableO {}

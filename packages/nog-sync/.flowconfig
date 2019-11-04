@@ -1,0 +1,20 @@
+[ignore]
+
+[include]
+
+[libs]
+
+[options]
+
+# See <http://blog.jamiter.com/2016/05/23/meteor-and-flow-static-type-checker/>
+# for general idea.
+#
+# Mapping works only to relative paths.  Therefore, use a symlink to a meteor
+# build dir.  The symlink is in `node_modules`, so that most tools should
+# automatically ignore it.
+
+module.name_mapper='^meteor/\(.*\)$' -> './node_modules/.flow_meteor_server_packages/\1'
+
+# Strip `.coffee`, assuming that a `.js.flow` decls file is present.
+
+module.name_mapper='^\(.*\)\.coffee$' -> '\1'

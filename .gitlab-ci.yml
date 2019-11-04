@@ -1,0 +1,38 @@
+default:
+  image: "${CI_REGISTRY_IMAGE}/dev:nog-20190821@sha256:281ac56532cf7eea7ac563e4e37f71fb30b89560456213476d6841e2e917c1cf"
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+
+stages:
+  - info
+  - build
+
+describe-env:
+  stage: info
+  only:
+    refs:
+      - master
+      - next
+      - spr/wip
+  script:
+    - pwd
+    - env
+    - 'docker info'
+
+make:
+  stage: build
+  only:
+    refs:
+      - master
+      - next
+      - spr/wip
+  script:
+    - ./tools/bin/ci-make
+  artifacts:
+    paths:
+      # - product/bin/* # Don't upload bin, because it is too large.
+      - product/deb/*.deb
+      - product/docker-images.yml
+    name: "${CI_PROJECT_NAME}-p${CI_PIPELINE_ID}-g${CI_COMMIT_SHORT_SHA}"
+    expire_in: "2 weeks"

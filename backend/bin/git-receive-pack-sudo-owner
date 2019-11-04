@@ -1,0 +1,15 @@
+#!/bin/bash
+set -o errexit -o nounset -o noglob -o pipefail
+
+if [ $# -ne 1 ]; then
+    echo >&2 'fatal: require one argument.'
+    exit 1
+fi
+
+getOwner="$(dirname "${BASH_SOURCE[0]}")/git-receive-pack-get-owner"
+if ! runas="$(sudo "${getOwner}" "$1")"; then
+    echo >&2 'fatal: failed to determine repo owner.'
+    exit 1
+fi
+
+exec sudo -u "${runas}" /usr/bin/git-receive-pack "$@"

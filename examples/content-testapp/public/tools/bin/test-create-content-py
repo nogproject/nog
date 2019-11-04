@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+
+import requests
+import json
+import random
+import string
+import hashlib
+import sys
+from subprocess import check_output
+
+
+def randomword(length):
+    chars = (random.choice(string.ascii_lowercase) for i in range(length))
+    return ''.join(chars)
+
+
+urlbase = 'http://localhost:3000/api/repos'
+headers = {'Content-Type': 'application/json'}
+
+fakeBlobId = '3f786850e387550fdab836ed7e6dc881de23001b'  # sha1_hex("a\n")
+nullCommit = '0000000000000000000000000000000000000000'
+
+userName = '__testing__user'
+repoName = randomword(12)
+repoFullName = '/'.join([userName, repoName])
+
+
+def main():
+    createRepo(repoFullName)
+    createInitialCommit(repoFullName)
+    commitId = getRef(repoFullName, 'branches/master')
+    createRef(repoFullName, 'branches/foo/bar', commitId)
+    getRefs(repoFullName)
+    deleteRef(repoFullName, 'branches/foo/bar', commitId)
+    commit = getCommit(repoFullName, commitId)
+    tree = getTree(repoFullName, commit['tree']['sha1'])
+    obj = getObject(repoFullName, tree['entries'][0]['sha1'])
+
+
+def createRepo(name):
+    print('createRepo:')
+    url = '{0}'.format(urlbase)
+    url = sign_req('POST', url)
+    content = {
+        'repoFullName': name
+    }
+    res = requests.post(url, headers=headers, data=json.dumps(content))
+    if res.status_code != 201:
+        die(res)
+    data = res.json()["data"]
+    print(json.dumps(data, indent=2))
+    return data
+
+
+def createInitialCommit(repo):
+    obj = {
+        'name': 'Fake data',
+        'meta': {
+            'study': 'foo',
+            'specimen': 'bar',
+            'random': randomword(10)
+        },
+        'blob': fakeBlobId
+    }
+    objId = createObject(repo, obj)
+    tree = {
+        'name': 'Workspace root',
+        'meta': {
+            'study': 'foo'
+        },
+        'entries': [
+            {'type': 'object', 'sha1': objId}
+        ]
+    }
+    treeId = createTree(repo, tree)
+    commit = {
+        'subject': 'Initial commit',
+        'message': '',
+        'tree': treeId,
+        'parents': []
+    }
+    commitId = createCommit(repo, commit)
+    updateRef(repo, 'branches/master', commitId, nullCommit)
+
+
+def createObject(repo, obj):
+    print('createObject:')
+    url = '{0}/{1}/db/objects'.format(urlbase, repo)
+    url = sign_req('POST', url)
+    content = obj
+    res = requests.post(url, headers=headers, data=json.dumps(content))
+    if res.status_code != 201:
+        die(res)
+    data = res.json()["data"]
+    print(json.dumps(data, indent=2))
+    return data["_id"]["sha1"]
+
+
+def getObject(repo, objectId):
+    print('getObject:')
+    url = '{0}/{1}/db/objects/{2}'.format(urlbase, repo, objectId)
+    url = sign_req('GET', url)
+    res = requests.get(url, headers=headers)
+    if res.status_code != 200:
+        die(res)
+    data = res.json()["data"]
+    print(json.dumps(data, indent=2))
+    return data
+
+
+def createTree(repo, tree):
+    print('createTree:')
+    url = '{0}/{1}/db/trees'.format(urlbase, repo)
+    url = sign_req('POST', url)
+    content = {
+        'tree': tree
+    }
+    res = requests.post(url, headers=headers, data=json.dumps(content))
+    if res.status_code != 201:
+        die(res)
+    data = res.json()["data"]
+    print(json.dumps(data, indent=2))
+    return data["_id"]["sha1"]
+
+
+def getTree(repo, treeId):
+    print('getTree:')
+    url = '{0}/{1}/db/trees/{2}'.format(urlbase, repo, treeId)
+    url = sign_req('GET', url)
+    res = requests.get(url, headers=headers)
+    if res.status_code != 200:
+        die(res)
+    data = res.json()["data"]
+    print(json.dumps(data, indent=2))
+    return data
+
+
+def createCommit(repo, commit):
+    print('createCommit:')
+    url = '{0}/{1}/db/commits'.format(urlbase, repo)
+    url = sign_req('POST', url)
+    content = commit
+    res = requests.post(url, headers=headers, data=json.dumps(content))
+    if res.status_code != 201:
+        die(res)
+    data = res.json()["data"]
+    print(json.dumps(data, indent=2))
+    return data["_id"]["sha1"]
+
+
+def getCommit(repo, commitId):
+    print('getCommit:')
+    url = '{0}/{1}/db/commits/{2}'.format(urlbase, repo, commitId)
+    url = sign_req('GET', url)
+    res = requests.get(url, headers=headers)
+    if res.status_code != 200:
+        die(res)
+    data = res.json()["data"]
+    print(json.dumps(data, indent=2))
+    return data
+
+
+def getRef(repo, refName):
+    print('getRef:')
+    url = '{0}/{1}/db/refs/{2}'.format(urlbase, repo, refName)
+    url = sign_req('GET', url)
+    res = requests.get(url, headers=headers)
+    if res.status_code != 200:
+        die(res)
+    data = res.json()["data"]
+    print(json.dumps(data, indent=2))
+    return data["entry"]["sha1"]
+
+
+def getRefs(repo):
+    print('getRefs:')
+    url = '{0}/{1}/db/refs'.format(urlbase, repo)
+    url = sign_req('GET', url)
+    res = requests.get(url, headers=headers)
+    if res.status_code != 200:
+        die(res)
+    data = res.json()["data"]
+    print(json.dumps(data, indent=2))
+    return data
+
+
+def createRef(repo, refName, commitId):
+    print('createRef:')
+    url = '{0}/{1}/db/refs'.format(urlbase, repo)
+    url = sign_req('POST', url)
+    content = {
+        'refName': refName,
+        'sha1': commitId
+    }
+    res = requests.post(url, headers=headers, data=json.dumps(content))
+    if res.status_code != 201:
+        die(res)
+    data = res.json()["data"]
+    print(json.dumps(data, indent=2))
+    return data
+
+
+def updateRef(repo, refName, newCommit, oldCommit):
+    print('updateRef:')
+    url = '{0}/{1}/db/refs/{2}'.format(urlbase, repo, refName)
+    url = sign_req('PATCH', url)
+    content = {
+        'new': newCommit,
+        'old': oldCommit
+    }
+    res = requests.patch(url, headers=headers, data=json.dumps(content))
+    if res.status_code != 200:
+        die(res)
+    data = res.json()["data"]
+    print(json.dumps(data, indent=2))
+    return data
+
+
+def deleteRef(repo, refName, oldCommit):
+    print('deleteRef:')
+    url = '{0}/{1}/db/refs/{2}'.format(urlbase, repo, refName)
+    url = sign_req('DELETE', url)
+    content = {
+        'old': oldCommit
+    }
+    res = requests.delete(url, headers=headers, data=json.dumps(content))
+    if res.status_code != 204:
+        die(res)
+    print('null')
+
+
+def sign_req(method, url):
+    res = check_output(['../../tools/bin/sign-req', method, url])
+    return res.decode('utf-8').rstrip()
+
+
+def die(res):
+    print("Unexpected status code", res.status_code)
+    try:
+        print(res.json())
+    except ValueError:
+        pass
+    res.raise_for_status()
+    sys.exit(1)
+
+main()

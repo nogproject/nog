@@ -1,0 +1,26 @@
+{
+  "name": "nog",
+  "version": "0.0.1",
+  "description": "A platform for collaborative data science",
+  "main": "no-toplevel-main",
+  "scripts": {
+    "lint": "echo \"Run lint in subfolders.\" && exit 1",
+    "test": "echo \"Run tests in subfolders.\" && exit 1"
+  },
+  "keywords": [
+    "Nog"
+  ],
+  "author": "Steffen Prohaska <prohaska@zib.de>",
+  "license": "MIT",
+  "devDependencies": {
+    "babel-eslint": "^10.0.1",
+    "coffee-script": "^1.12.7",
+    "eslint": "^5.15.1",
+    "eslint-config-airbnb": "^17.1.0",
+    "eslint-plugin-import": "^2.16.0",
+    "eslint-plugin-jsx-a11y": "^6.2.1",
+    "eslint-plugin-meteor": "^5.1.0",
+    "eslint-plugin-react": "^7.12.4",
+    "underscore": "^1.9.1"
+  }
+}

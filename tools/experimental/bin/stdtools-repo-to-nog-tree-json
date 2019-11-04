@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+
+from subprocess import check_output
+import json
+import os
+import os.path
+import sys
+from datetime import datetime, timezone
+
+
+usage = '''\
+usage: stdtools-repo-to-nog-tree-json
+
+`stdtools-repo-to-nog-tree-json` can be run in the root directory of a stdrepo
+working copy to create a JSON representation that can be imported to Nog with
+`nog-post-tree-json`.
+
+Example:
+
+    stdtools-repo-to-nog-tree-json | nog-post-tree-json
+
+File `__meta__.json` is interpreted as metadata for the directory.  A file
+`*.meta.json` is interpreted as metadata of the corresponding file.
+
+Silo files that are copied during `stdtools build` are stored as nog blobs if
+they are smaller than the limit in the environment variable
+`NOG_BLOB_SIZE_LIMIT`.  For other silo files, only their sha1 is stored in
+`meta.siloblob`.
+
+The full content of Pandoc inputs is stored in `meta.content`.  For other
+content, only the Git blob id is stored in `meta.gitblob`.
+
+'''
+
+
+HEAD = 'HEAD'
+BLOB_SIZE_LIMIT = int(os.environ.get('NOG_BLOB_SIZE_LIMIT'))
+
+
+def main():
+    argparse()
+    convert()
+
+
+def argparse():
+    if len(sys.argv) < 2:
+        return
+    if (sys.argv[1] == '-h') or (sys.argv[1] == '--help'):
+        print(usage)
+        sys.exit(1)
+
+
+def convert():
+    blobs = {e[1]: e[0] for e in gitLsTreeRecursive(HEAD)}
+    silo = {e[1]: e[0] for e in gitSiloLsTree(HEAD)}
+    cmds = {e[1]: e[0] for e in stdtoolsCmds()}
+    treeId = gitRevParse(HEAD + '^{tree}')
+    hiera = hierarchy('.', treeId)
+    tree = nogTree(hiera, blobs, silo, cmds)
+    res = {
+        'commit': commitInfo(HEAD),
+        'tree': tree
+    }
+    print(json.dumps(res, indent=2, sort_keys=True))
+
+
+def commitInfo(rev):
+    return {
+        'id': gitRevParse(rev),
+        'subject': gitShowSubject(rev),
+        'message': gitShowMessageBody(rev),
+        'author': gitShowAuthor(rev),
+        'authorDate': gitShowAuthorDate(rev),
+        'committer': gitShowCommitter(rev),
+        'commitDate': gitShowCommitDate(rev),
+        'stdRepoName': os.path.basename(os.getcwd())
+    }
+
+
+def nogTree(hiera, blobs, silo, cmds, prefix=None):
+    prefix = prefix or ''
+    (_, hname, hsha1, hentries) = hiera
+    tree = {
+        'name': hname,
+        'entries': [],
+        'meta': {
+            'gittree': hsha1
+        }
+    }
+    try:
+        tree['meta'] = blobJson(blobs[prefix + '__meta__.json'])
+    except KeyError:
+        pass
+
+    entries = tree['entries']
+    for e in hentries:
+        (ty, path, sha1, content) = e
+
+        # Skip special file names that will be interpreted as meta.
+        if path == '__meta__.json':
+            continue
+        if path.endswith('.meta.json'):
+            continue
+
+        fullPath = prefix + path
+
+        if ty == 'blob':
+            obj = {
+                'name': path,
+                'meta': {},
+                'blob': None
+            }
+
+            # Try to attach meta from blob.
+            try:
+                obj['meta'] = blobJson(blobs[fullPath + '.meta.json'])
+            except KeyError:
+                pass
+
+            # Put silo files that are copied to results and smaller than the
+            # size limit into blob storage; store other silo files in
+            # `meta.siloblob`.
+            #
+            # Store pandoc inputs in `meta.content` and other content as
+            # `meta.gitblob`.
+            if (fullPath in silo):
+                siloblob = silo[fullPath]
+                if cmds.get(fullPath, None) == 'copy':
+                    if os.path.getsize(fullPath) < BLOB_SIZE_LIMIT:
+                        obj['blob'] = siloblob
+                    else:
+                        warn((
+                            'Silo file larger than NOG_BLOB_SIZE_LIMIT={0}: '
+                            '{1}'
+                            ).format(BLOB_SIZE_LIMIT, fullPath))
+                        obj['meta']['siloblob'] = siloblob
+                else:
+                    obj['meta']['siloblob'] = siloblob
+            else:
+                if cmds.get(fullPath, None) == 'pandoc':
+                    obj['meta']['content'] = blobContent(sha1)
+                else:
+                    obj['meta']['gitblob'] = sha1
+
+            entries.append(obj)
+
+        elif ty == 'tree':
+            t = nogTree(e, blobs, silo, cmds, prefix=(fullPath + '/'))
+            entries.append(t)
+
+        elif ty == 'symlink':
+            obj = {
+                'name': path,
+                'meta': {
+                    'symlink': blobContent(sha1)
+                },
+                'blob': None
+            }
+            entries.append(obj)
+
+        else:
+            raise RuntimeError('Invalid entry type: {0}.'.format(ty))
+
+    return tree
+
+
+def blobJson(blob):
+    res = check_output(['git', 'cat-file', 'blob', blob]).decode('utf-8')
+    return json.loads(res)
+
+
+def blobContent(blob):
+    return check_output(['git', 'cat-file', 'blob', blob]).decode('utf-8')
+
+
+def gitLsTreeRecursive(tree):
+    res = check_output(['git', 'ls-tree', '-r', '-z', tree]).decode('utf-8')
+    for e in res[:-1].split('\x00'):
+        (info, path) = e.split('\t')
+        (mode, ty, sha1) = info.split(' ')
+        if ty != 'blob':
+            warn('Ignoring non-blob: {0}'.format(path))
+        else:
+            yield (sha1, path)
+
+
+def gitSiloLsTree(tree):
+    res = check_output(['git', 'silo', 'ls-tree', tree]).decode('utf-8')
+    for e in res[:-1].split('\n'):
+        (sha1, path) = e.split(' ', 1)
+        yield (sha1, path)
+
+
+def stdtoolsCmds():
+    res = check_output(['stdtools', 'build-ls-cmds']).decode('utf-8')
+    for e in res[:-1].split('\n'):
+        (cmd, path) = e.split(' ', 1)
+        while path.startswith('--'):
+            path = path.split(' ', 1)[1]
+        yield (cmd, path)
+
+
+def hierarchy(name, treeSha1, prefix=None):
+    prefix = prefix or ''
+    entries = []
+    for e in gitLsTree(treeSha1):
+        (ty, sha1, path) = e
+        if ty == 'commit':
+            warn('Ignoring commit: {0}{1}'.format(prefix, path))
+        elif ty == 'blob' or ty == 'symlink':
+            entries.append((ty, path, sha1, None))
+        elif ty == 'tree':
+            entries.append(hierarchy(path, sha1, prefix + path + '/'))
+    return ('tree', name, treeSha1, tuple(entries))
+
+
+def gitLsTree(tree):
+    res = check_output(['git', 'ls-tree', '-z', tree]).decode('utf-8')
+    for e in res[:-1].split('\x00'):
+        (info, path) = e.split('\t')
+        (mode, ty, sha1) = info.split(' ')
+        if mode == '120000':
+            ty = 'symlink'
+        yield (ty, sha1, path)
+
+
+def gitRevParse(name):
+    res = check_output(['git', 'rev-parse', name])
+    return res.decode('utf-8').rstrip('\n')
+
+
+def gitShowSubject(rev):
+    return gitShowLine(rev, '%s')
+
+
+def gitShowMessageBody(rev):
+    return gitShowBlock(rev, '%b')
+
+
+def gitShowAuthor(rev):
+    return gitShowLine(rev, '%an <%ae>')
+
+
+def gitShowAuthorDate(rev):
+    return gitShowDate(rev, '%ad')
+
+
+def gitShowCommitter(rev):
+    return gitShowLine(rev, '%cn <%ce>')
+
+
+def gitShowCommitDate(rev):
+    return gitShowDate(rev, '%cd')
+
+
+def gitShowLine(rev, pretty):
+    res = check_output(['git', 'show', '-s', '--pretty=' + pretty, rev])
+    return res.decode('utf-8').rstrip('\n')
+
+
+def gitShowBlock(rev, pretty):
+    res = check_output(['git', 'show', '-s', '--pretty=' + pretty, rev])
+    return res.decode('utf-8')
+
+
+# `gitShowDate()` gets the date from git and converts it to an ISO UTC string
+# without fractional seconds.
+def gitShowDate(rev, pretty):
+    res = check_output([
+            'git', 'show', '-s', '--date=iso', '--pretty=' + pretty, rev
+        ])
+    res = res.decode('utf-8').rstrip('\n')
+    # Parse with timezone offset and convert to UTC.
+    res = datetime.strptime(res, '%Y-%m-%d %H:%M:%S %z')
+    res = res.astimezone(timezone.utc)
+    res = datetime.strftime(res, '%Y-%m-%dT%H:%M:%SZ')
+    return res
+
+
+def warn(msg):
+    sys.stderr.write('Warning: ')
+    sys.stderr.write(msg)
+    sys.stderr.write('\n')
+
+
+main()

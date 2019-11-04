@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package nogev.fsomain;
+option go_package = "fsomainpb";
+
+message Event {
+    enum Type {
+        EV_UNSPECIFIED = 0;
+
+        // reserved 1 to 9; // future common use
+
+        // reserved 10 to 19; // fsomain
+        EV_FSO_MAIN_INITIALIZED = 11;
+        EV_FSO_REGISTRY_ACCEPTED = 12;
+        EV_FSO_REGISTRY_CONFIRMED = 13;
+        EV_UNIX_DOMAIN_ADDED = 14;
+
+        // reserved 20 to 29; // fsoregistry
+    }
+
+    // Common `Event` header:
+    Type event = 1;
+    bytes id = 2;
+    bytes parent = 3;
+    reserved 4 to 9; // future common header use
+
+    // reserved 10 to 19; // fsomain
+    string fso_main_name = 11;
+    string fso_registry_name = 12;
+    string unix_domain_name = 111; // from unixdomains
+    bytes unix_domain_id = 112; // from unixdomains
+
+    reserved 20 to 29; // fsoregistry
+    reserved 30 to 39; // fsorepos
+}

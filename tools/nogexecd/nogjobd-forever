@@ -1,0 +1,14 @@
+#!/usr/bin/env coffee
+
+forever = require 'forever-monitor'
+
+coffee = './node_modules/coffee-script/bin/coffee'
+
+child = forever.start [coffee, 'nogjobd.coffee'], {
+    watch: false
+    minUptime: 10000
+    spinSleepTime: 5000
+  }
+
+child.on 'restart', (info) -> console.log 'Restart', info.times
+child.on 'exit:code', (code) -> console.log 'Child exit code', code

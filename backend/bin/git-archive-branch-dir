@@ -1,0 +1,11 @@
+#!/bin/bash
+set -o errexit -o nounset -o noglob -o pipefail
+
+if [ $# -ne 2 ]; then
+    echo >&2 'fatal: require two arguments.'
+    exit 1
+fi
+branch="$1"
+dir="$2"
+
+exec /usr/bin/git -C "${dir}" archive "refs/heads/${branch}"

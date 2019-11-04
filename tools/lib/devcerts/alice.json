@@ -1,0 +1,16 @@
+{
+  "CN": "Alice Adams <aa@example.com>",
+  "hosts": [],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "DE",
+      "O": "ZIB",
+      "OU": "nog-users"
+    }
+  ]
+}
+

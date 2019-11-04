@@ -1,0 +1,20 @@
+{
+  "name": "nog-fso-mini-registry",
+  "version": "0.0.0",
+  "description": "A simple Nogfsoregd read model to resolve repo IDs and paths",
+  "main": "index-server.js",
+  "scripts": {
+    "lint": "\"$(git rev-parse --show-toplevel)\"/node_modules/.bin/eslint .",
+    "lint-fix": "meteor npm run lint -- --fix",
+    "test": "npm run test-headless",
+    "test-watch": "echo >&2 'nog-fso-mini-registry has no unit tests.' && exit 0 && cd \"$(git rev-parse --show-toplevel)\"/web/apps/packages-testapp && npm run test-packages-watch-nog-fso-mini-registry",
+    "test-headless": "echo >&2 'nog-fso-mini-registry has no unit tests.' && exit 0 && cd \"$(git rev-parse --show-toplevel)\"/web/apps/packages-testapp && npm run test-packages-headless-nog-fso-mini-registry"
+  },
+  "keywords": [
+    "Nog"
+  ],
+  "author": "Steffen Prohaska <prohaska@zib.de>",
+  "license": "MIT",
+  "//": "See toplevel package.json for ESLint dependencies",
+  "devDependencies": { }
+}

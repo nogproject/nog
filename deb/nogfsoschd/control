@@ -1,0 +1,7 @@
+Package: nogfsoschd
+Version: {{ version }}
+Section: net
+Priority: standard
+Architecture: amd64
+Maintainer: Steffen Prohaska <prohaska@zib.de>
+Description: Nog FSO schedule daemon

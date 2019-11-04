@@ -1,0 +1,17 @@
+*.idea/
+*.swp
+.DS_Store
+/local/
+/node/
+/product/
+/python/
+__pycache__/
+*.pyc
+
+/node_modules/*
+!/node_modules/nog-*
+npm-debug.log
+
+# See HACKING-go "Vendor".
+/backend/vendor/
+*.pb.go

@@ -1,0 +1,150 @@
+#!/bin/bash
+
+set -o nounset -o errexit -o noglob -o pipefail
+
+rootdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd ../.. && pwd)"
+
+usage() {
+    cat <<\EOF
+usage: gen-devdoc
+
+gen-devdoc compiles the full devdoc and apidoc from sources like the package
+READMEs.
+
+EOF
+}
+
+main() {
+    argparse "$@"
+
+    cd "${rootdir}"
+    fmtDevdoc >"devdoc.md"
+    fmtApidoc >"apidoc.md"
+}
+
+# `md1` includes a Markdown file with its heading level increased by 1.
+md1() {
+    sed -e 's/^##### /###### /' \
+        -e 's/^#### /##### /' \
+        -e 's/^### /#### /' \
+        -e 's/^## /### /' \
+        -e 's/^# /## /' \
+        -- "$@"
+}
+
+fmtDevdoc() {
+    cat <<\EOF
+# Nog Developer Documentation
+By Steffen Prohaska
+<!--@@VERSIONINC@@-->
+
+<!--
+    DO NOT EDIT.  The documentation has been automatically created from the
+    package READMEs by gen-devdoc.
+-->
+
+<!-- toc -->
+
+EOF
+    md1 'packages/nog-error/README.md'
+    echo
+    md1 'packages/nog-settings/README.md'
+    echo
+    md1 'packages/nog-access/README.md'
+    echo
+    md1 'packages/nog-rest/README.md'
+    echo
+    md1 'packages/nog-auth/README.md'
+    echo
+    md1 'packages/nog-content/README.md'
+    echo
+    md1 'packages/nog-errata/README.md'
+    echo
+    md1 'packages/nog-blob/README.md'
+    echo
+    md1 'packages/nog-files/README.md'
+    echo
+    md1 'packages/nog-flow/README.md'
+    echo
+    md1 'packages/nog-tree/README.md'
+    echo
+    md1 'packages/nog-repr-example/README.md'
+    echo
+    md1 'packages/nog-repr-image/README.md'
+    echo
+    md1 'packages/nog-repr-markdown/README.md'
+    echo
+    md1 'packages/nog-repr-flow/README.md'
+    echo
+    md1 'packages/nog-multi-bucket/README.md'
+    echo
+    md1 'packages/nog-s3/README.md'
+    echo
+    md1 'packages/nog-test/README.md'
+    echo
+    echo '## Complete list of error specs'
+    echo
+    echo '```{.coffee}'
+    cat 'packages/nog-error/nog-error-specs.coffee'
+    echo '```'
+    echo
+    echo '## REST API'
+    echo
+    echo 'See [apidoc](./apidoc.md).'
+}
+
+fmtApidoc() {
+    cat <<\EOF
+# Nog REST v1 API Documentation
+By Steffen Prohaska
+<!--@@VERSIONINC@@-->
+
+<!--
+    DO NOT EDIT.  The documentation has been automatically created from the
+    package READMEs by gen-devdoc.
+-->
+
+<!-- toc -->
+
+EOF
+    echo '## Introduction'
+    echo
+    cat 'apidoc-intro.md'
+    echo
+    md1 'packages/nog-auth/apidoc.md'
+    echo
+    echo '## API'
+    echo
+    md1 'packages/nog-content/apidoc.md'
+    echo
+    md1 'packages/nog-blob/apidoc-blobs.md'
+    echo
+    md1 'packages/nog-blob/apidoc-upload.md'
+    echo
+    md1 'apps/nog-app/apidoc.md'
+}
+
+argparse() {
+    while [ $# -ge 1 ]; do
+        case $1 in
+        -h|--help)
+            usage
+            exit
+            ;;
+        -*)
+            die "unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+}
+
+die() {
+    printf >&2 'Error: %s\n' "$1"
+    exit 1
+}
+
+main "$@"

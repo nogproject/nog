@@ -1,0 +1,8 @@
+Package: nogfsosdwbakd3
+Version: {{ version }}
+Depends: bash, git, libcap2-bin, nogfsoctl, nogfsoschd, tar, sudo
+Section: net
+Priority: standard
+Architecture: amd64
+Maintainer: Steffen Prohaska <prohaska@zib.de>
+Description: Nog FSO shadow repositories backup daemon

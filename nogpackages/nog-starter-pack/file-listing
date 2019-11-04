@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+
+import hashlib
+import nog
+import os
+import os.path
+import sys
+
+if len(sys.argv) != 2 or sys.argv[1] == '-h' or sys.argv[1] == '--help':
+    print('Usage: file-listing <repo>')
+    exit(1)
+repo_name = sys.argv[1]
+
+# Access the repo and get the current master tree.
+workspace = nog.openRepo(repo_name)
+master = workspace.getMaster()
+root = master.tree
+
+# Either get the tree `results` or create a new one.
+try:
+    results = next(root.trees('results'))
+except StopIteration:
+    results = nog.Tree()
+    results.name = 'results'
+    root.append(results)
+
+# Create a fresh tree `results/file-listing`; replace an existing one.
+res = nog.Tree()
+res.name = 'file-listing'
+try:
+    (idx, e) = next(results.enumerateEntries(res.name))
+    results.pop(idx)
+except StopIteration:
+    idx = 0
+results.insert(idx, res)
+
+# Get the input `datalist`; or fail if it is missing.
+try:
+    datalist = next(root.trees('datalist'))
+except StopIteration:
+    raise RuntimeError('Failed to access the workspace `datalist`.')
+
+# Prefetch blobs from S3 in parallel to hide latency.
+print('Prefetching blobs...')
+blobs = []
+for d in datalist.entries():
+    if d.type is 'object':
+        blobs.append(d.blob)
+workspace.prefetchBlobs(blobs)
+print('Prefetching blobs done.')
+
+# Create an object for the markdown content.  Name it `index.md`, so that the
+# web UI will render it at the tree level.
+listing = nog.Object()
+listing.name = 'index.md'
+res.insert(0, listing)
+content = '# Datalist Listing\n\n'
+
+# Iterate over the datalist and create a listing with some details about the
+# blobs.
+tmpfile = 'file-listing-tmp-blob-file'
+if os.path.exists(tmpfile):
+    raise RuntimeError('File `{0}` already exists.'.format(tmpfile))
+
+print('Creating datalist listing...')
+for d in datalist.entries():
+    print(' ', d.name)
+    content += '`datalist/{0}`, {1}'.format(d.name, d.type)
+    if d.type != 'object':
+        content += '.\n\n'
+        continue
+
+    # Create a hardlink to the blob.
+    d.linkBlob(tmpfile)
+
+    # Append a sha1 and the size of the blob content.
+    sha1 = hashlib.sha1()
+    with open(tmpfile, 'rb') as fp:
+        sha1.update(fp.read())
+    content += ', sha1: ' + sha1.hexdigest()
+    content += ', size: {0}'.format(os.stat(tmpfile).st_size)
+
+    os.remove(tmpfile)
+    content += '.\n\n'
+
+listing.meta['content'] = content
+print('Creating datalist listing done.')
+
+# Finally commit the updated root tree.
+print('Commiting result.')
+workspace.commitTree(subject="Add datalist listing to results", tree=root,
+                     parent=master.sha1)
+print('done.')

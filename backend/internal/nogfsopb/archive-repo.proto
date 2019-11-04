@@ -1,0 +1,257 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+import "job-control.proto";
+import "root-info.proto";
+// import "status.proto"; // implicit use of enum StatusCode.
+
+service ArchiveRepo {
+    rpc BeginArchiveRepo(BeginArchiveRepoI) returns (BeginArchiveRepoO);
+    rpc GetArchiveRepo(GetArchiveRepoI) returns (GetArchiveRepoO);
+
+    rpc BeginArchiveRepoFiles(BeginArchiveRepoFilesI) returns (BeginArchiveRepoFilesO);
+    rpc CommitArchiveRepoTartt(CommitArchiveRepoTarttI) returns (CommitArchiveRepoTarttO);
+    rpc BeginArchiveRepoSwap(BeginArchiveRepoSwapI) returns (BeginArchiveRepoSwapO);
+    rpc CommitArchiveRepoFiles(CommitArchiveRepoFilesI) returns (CommitArchiveRepoFilesO);
+    rpc AbortArchiveRepoFiles(AbortArchiveRepoFilesI) returns (AbortArchiveRepoFilesO);
+    rpc EndArchiveRepoFiles(EndArchiveRepoFilesI) returns (EndArchiveRepoFilesO);
+    rpc CommitArchiveRepoGc(CommitArchiveRepoGcI) returns (CommitArchiveRepoGcO);
+
+    rpc CommitArchiveRepo(CommitArchiveRepoI) returns (CommitArchiveRepoO);
+    rpc AbortArchiveRepo(AbortArchiveRepoI) returns (AbortArchiveRepoO);
+}
+
+service RegistryArchiveRepo {
+    rpc RegistryBeginArchiveRepo(RegistryBeginArchiveRepoI) returns (RegistryBeginArchiveRepoO);
+    rpc RegistryCommitArchiveRepo(RegistryCommitArchiveRepoI) returns (RegistryCommitArchiveRepoO);
+    rpc RegistryAbortArchiveRepo(RegistryAbortArchiveRepoI) returns (RegistryAbortArchiveRepoO);
+}
+
+service ReposArchiveRepo {
+    rpc ReposBeginArchiveRepo(ReposBeginArchiveRepoI) returns (ReposBeginArchiveRepoO);
+    rpc ReposCommitArchiveRepo(ReposCommitArchiveRepoI) returns (ReposCommitArchiveRepoO);
+    rpc ReposAbortArchiveRepo(ReposAbortArchiveRepoI) returns (ReposAbortArchiveRepoO);
+}
+
+message BeginArchiveRepoI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    bytes repo = 4;
+    bytes repo_vid = 5;
+    bytes workflow = 6;
+    string author_name = 7;
+    string author_email = 8;
+}
+
+message BeginArchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+    bytes repo_vid = 3;
+    bytes workflow_index_vid = 4;
+    bytes workflow_vid = 5;
+}
+
+message BeginArchiveRepoFilesI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    RepoAclPolicy acl_policy = 4;
+}
+
+message BeginArchiveRepoFilesO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message CommitArchiveRepoTarttI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    string tar_path = 4;
+}
+
+message CommitArchiveRepoTarttO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message BeginArchiveRepoSwapI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    string working_dir = 4;
+}
+
+message BeginArchiveRepoSwapO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message CommitArchiveRepoFilesI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message CommitArchiveRepoFilesO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message AbortArchiveRepoFilesI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    int32 status_code = 4; // StatusCode archive-repo code.
+    string status_message = 5;
+}
+
+message AbortArchiveRepoFilesO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message EndArchiveRepoFilesI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message EndArchiveRepoFilesO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message CommitArchiveRepoGcI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message CommitArchiveRepoGcO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message CommitArchiveRepoI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message CommitArchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+    bytes workflow_index_vid = 3;
+}
+
+message AbortArchiveRepoI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    int32 status_code = 4; // StatusCode archive-repo code.
+    string status_message = 5;
+}
+
+message AbortArchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+    bytes workflow_index_vid = 3;
+}
+
+message GetArchiveRepoI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    JobControl job_control = 3;
+}
+
+message GetArchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+    string registry = 3;
+    bytes repoId = 4;
+    int32 status_code = 5; // StatusCode common code or archive-repo code.
+    string status_message = 6;
+}
+
+message RegistryBeginArchiveRepoI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    bytes repo = 4;
+    bytes workflow = 5;
+}
+
+message RegistryBeginArchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message RegistryCommitArchiveRepoI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    bytes repo = 4;
+    bytes workflow = 5;
+}
+
+message RegistryCommitArchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message RegistryAbortArchiveRepoI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    bytes repo = 4;
+    bytes workflow = 5;
+    int32 status_code = 6; // StatusCode archive-repo code.
+}
+
+message RegistryAbortArchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message ReposBeginArchiveRepoI {
+    reserved 1; // Potential future header.
+    bytes repo = 2;
+    bytes repo_vid = 3;
+    bytes workflow = 4;
+}
+
+message ReposBeginArchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes repo_vid = 2;
+}
+
+message ReposCommitArchiveRepoI {
+    reserved 1; // Potential future header.
+    bytes repo = 2;
+    bytes repo_vid = 3;
+    bytes workflow = 4;
+    string tar_path = 5;
+}
+
+message ReposCommitArchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes repo_vid = 2;
+}
+
+message ReposAbortArchiveRepoI {
+    reserved 1; // Potential future header.
+    bytes repo = 2;
+    bytes repo_vid = 3;
+    bytes workflow = 4;
+    int32 status_code = 5; // StatusCode archive-repo code.
+    string status_message = 6;
+}
+
+message ReposAbortArchiveRepoO {
+    reserved 1; // Potential future header.
+    bytes repo_vid = 2;
+}

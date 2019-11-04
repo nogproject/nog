@@ -1,0 +1,8 @@
+Package: nogfsotarsecbakd
+Version: {{ version }}
+Depends: bash, tar
+Section: net
+Priority: standard
+Architecture: amd64
+Maintainer: Steffen Prohaska <prohaska@zib.de>
+Description: Nog FSO Tar secrets backup daemon

@@ -1,0 +1,8 @@
+Package: nogfsostad
+Version: {{ version }}
+Depends: acl, git-fso, sudo
+Section: net
+Priority: standard
+Architecture: amd64
+Maintainer: Steffen Prohaska <prohaska@zib.de>
+Description: Nog FSO stat daemon

@@ -1,0 +1,14 @@
+#!/bin/bash
+set -o errexit -o nounset -o noglob -o pipefail
+
+if [ $# -ne 1 ]; then
+    echo >&2 'fatal: require one argument.'
+    exit 1
+fi
+
+if ! [ -d "$1" ]; then
+    echo >&2 'fatal: argument is not a directory.'
+    exit 1
+fi
+
+exec /usr/bin/stat --format=%U -- "$1"

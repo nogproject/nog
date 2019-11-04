@@ -1,0 +1,63 @@
+{
+  "name": "nog-app",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "meteor run --settings _private/settings.json",
+    "lint": "\"$(git rev-parse --show-toplevel)\"/node_modules/.bin/eslint .",
+    "settings": "\"$(git rev-parse --show-toplevel)\"/tools/bin/readlink -f _private/settings.json",
+    "settings-help": "NOG_SETTINGS_HELP=1 meteor npm start -- --port 3333 --once",
+    "test": "set -x && meteor npm run test-headless && meteor npm run test-packages-headless",
+    "test-watch": "meteor test --driver-package=practicalmeteor:mocha --settings _private/settings.json",
+    "test-headless": "TEST_BROWSER_DRIVER=chrome meteor --once test --driver-package meteortesting:mocha --settings _private/settings.json",
+    "test-headless-watch": "TEST_BROWSER_DRIVER=chrome TEST_WATCH=1 meteor test --driver-package meteortesting:mocha --settings _private/settings.json",
+    "test-server": "TEST_ClIENT=0 meteor --once test --driver-package meteortesting:mocha --settings _private/settings.json",
+    "test-server-watch": "TEST_WATCH=1 TEST_ClIENT=0 meteor test --driver-package meteortesting:mocha --settings _private/settings.json",
+    "ls-test-packages": "grep -i ontest packages/*/package.js | cut -d / -f 2 | grep -v nog-test",
+    "test-packages-watch": "set -x && meteor test-packages --driver-package=practicalmeteor:mocha --settings _private/settings.json $(meteor npm run ls-test-packages | grep ^nog-)",
+    "test-packages-headless": "set -x && TEST_BROWSER_DRIVER=chrome meteor --once test-packages --driver-package meteortesting:mocha --settings _private/settings.json $(meteor npm run ls-test-packages | grep ^nog-)"
+  },
+  "dependencies": {
+    "@babel/runtime": "^7.3.4",
+    "aws-sdk": "^2.411.0",
+    "babel-runtime": "^6.26.0",
+    "bcrypt": "^3.0.4",
+    "core-js": "^2.6.5",
+    "grpc": "^1.18.0",
+    "highlight.js": "^9.15.6",
+    "js-yaml": "^3.12.2",
+    "jsonwebtoken": "^8.5.0",
+    "ldapjs": "^1.0.2",
+    "markdown-toc": "^1.2.0",
+    "marked": "^0.6.1",
+    "meteor-node-stubs": "^0.4.1",
+    "moment": "^2.24.0",
+    "node-forge": "^0.8.1",
+    "path-to-regexp": "^3.0.0",
+    "prop-types": "^15.7.2",
+    "protobufjs": "^6.8.8",
+    "react": "^16.8.3",
+    "react-autosuggest": "^9.4.3",
+    "react-dom": "^16.8.3",
+    "react-mounter": "^1.2.0",
+    "sanitize-html": "^1.20.0",
+    "uuid": "^3.3.2"
+  },
+  "//aa": "Contributors is based on `git log --pretty='%aN <%ae>' | sort -u`",
+  "//ab": "List main contributors first, see also CONTRIBUTING.md.",
+  "contributors": [
+    "Marc Osterland <osterland@zib.de>",
+    "Steffen Prohaska <prohaska@zib.de>",
+    "Ulrike Homberg <homberg@zib.de>",
+    "Vincent Dercksen <dercksen@zib.de>",
+    "Josephine Schallau <schallau@zib.de>"
+  ],
+  "//ba": "See toplevel package.json for ESLint dependencies",
+  "devDependencies": {
+    "chai": "^4.2.0",
+    "chromedriver": "^2.46.0",
+    "selenium-webdriver": "^3.6.0",
+    "sinon": "^4.5.0",
+    "sinon-chai": "^3.3.0"
+  }
+}

@@ -1,0 +1,48 @@
+template(name='search')
+  .row
+    .col-md-8.col-md-offset-2
+      +nogSearchInputForm inputFormParams
+      p.help-block
+        | Simple words are searched in description, text, and path.
+        | Double quotes "fred author" search an exact phrase.
+        if optTextSearch
+          | Minus '-word' excludes a term.  '"fred author" foo bar' means
+          |  ('fred author' and ('foo' or 'bar')).
+        else
+          | MongoDB text search is not available.
+        | 'field:val' searches meta fields with substring match; example:
+        | 'path:md'.  Double quoted "field:val" uses exact regex match;
+        | examples: "owner:sprohaska", "owner:.*pro.*".  Useful fields: path,
+        | repo, owner, text, description.
+        | Double curly braces '&lbrace;&lbrace;.&rbrace;&rbrace;' indicate
+        | search aliases: assuming the alias ’images’ = ‘png jpg’ was defined
+        | in the tab ‘Search settings’ of the user's settings, then
+        | '&lbrace;&lbrace;images&rbrace;&rbrace;' searches for ‘png jpg’.
+  .row
+    .col-md-12
+      +EasySearch.NogComponent index=content
+      ul
+        each result
+          each refs
+            with refHref
+              li
+                a(href=href) #{text}
+                with nogModalMode
+                  if mayAddPrograms
+                    | &nbsp;
+                    button.btn.btn-default.btn-xs.js-add-program-to-target(
+                        disabled=action)
+                      | Add to list of programs in
+                      | #{trgRepo.owner}/#{trgRepo.name}
+                  if mayAddData
+                    | &nbsp;
+                    button.btn.btn-default.btn-xs.js-add-to-target(
+                        disabled=action)
+                      | Add to datalist in
+                      | #{trgRepo.owner}/#{trgRepo.name}
+
+  .row
+    .col-md-12
+      if hasMoreDocuments
+        button.btn.btn-default.btn-sm.js-loadMore
+          | Load more

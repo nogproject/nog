@@ -1,0 +1,50 @@
+<template name="nogRepoTopBarPresenter">
+  <div class="t-repo-top-bar-presenter">
+    <div class="row">
+      <div class="col-sm-8 nog-viewer-buttons">
+        {{> viewerButtons buttonArgs}}
+        {{> nogRepoBreadcrumbs breadcrumbsArgs }}
+        {{> forkedFrom forkedArgs}}
+      </div>
+      {{#if optShowRepoToolbar}}
+        <div class="col-sm-4">
+          {{> repoToolbar toolbarArgs}}
+        </div>
+      {{/if}}
+    </div>
+    {{#if repoDoesNotExists}}
+      {{> nogRepoTopBarWarningNoRepo}}
+    {{/if}}
+  </div>
+</template>
+
+<template name="nogRepoTopBarWarningNoRepo">
+  <div class="row t-warning-no-repo">
+    <div class="col-sm-12 alert alert-warning">
+      <strong>Warning:</strong>
+      Either the repository does not exist or you have no permissions to access
+      the repository.
+    </div>
+  </div>
+</template>
+
+
+<template name="nogRepoBreadcrumbs">
+  <strong>{{ownerName}}</strong>
+  /
+  {{#if rootHref}}
+    <a href={{rootHref}}>
+      <strong>{{repoName}}</strong>
+    </a>
+  {{else}}
+    <strong>{{repoName}}</strong>
+  {{/if}}
+  {{#each part in hrefPath}}
+    /
+    {{#if part.href}}
+      <a href={{part.href}}>{{part.name}}</a>
+    {{else}}
+      <strong>{{part.name}}</strong>
+    {{/if}}
+  {{/each}}
+</template>

@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+
+import json
+import nog
+import os
+import random
+import string
+
+repo = 'fake_microscope_2015'
+
+if 'NOG_API_URL' in os.environ:
+    # Use `HUVEC-Chemotaxis_VEGF.avi` for all blobs.
+    # The actual data is only needed once during the first import.
+    fakeBlob = '/tmp/HUVEC-Chemotaxis_VEGF.avi'
+    # Then use ony the sha1.
+    fakeBlob = 'acbccd5bb5140efe5cf082c74402649a898bb669'
+else:
+    # Use fake content for local testing.
+    fakeBlob = 'a\n'.encode('utf-8')
+
+
+def main():
+    remote = ensureRepo(repo)
+    master = remote.getMaster()
+    root = fakeTree()
+    master = remote.commitTree(
+            subject='Fake data import', tree=root, parent=master.sha1)
+    print(master.sha1)
+    print(stringify_pretty(master.content))
+
+
+def ensureRepo(repo):
+    try:
+        remote = nog.openRepo(repo)
+        master = remote.getMaster()
+        return remote
+    except RuntimeError as err:
+        if 'ERR_REPO_MISSING' in str(err):
+            return nog.createRepo(repo)
+        raise
+
+
+def fakeTree():
+    root = nog.Tree()
+    root.meta['datalist'] = {}
+    root.name = 'Microscope Images'
+    for d in range(1, 15, 4):
+        day = nog.Tree()
+        root.insert(0, day)
+        date = '2015-07-%02d' % d
+        day.name = date
+        day.meta['description'] = 'Data for experiments on ' + date
+        for i in range(5):
+            obj = nog.Object()
+            day.insert(0, obj)
+            specimen = randomword(10)
+            obj.name = specimen + '-Chemotaxis_' + randomword(3) + '.avi'
+            obj.blob = fakeBlob
+            obj.meta['description'] = (
+                    'Chemotaxis experiment, specimen ' + specimen
+                )
+            obj.meta['specimen'] = specimen
+            obj.meta['acquisitionDate'] = date
+    return root
+
+
+def randomword(length):
+    chars = (random.choice(string.ascii_lowercase) for i in range(length))
+    return ''.join(chars)
+
+
+def stringify_pretty(d):
+    return json.dumps(d, sort_keys=True, ensure_ascii=False, indent=2) + '\n'
+
+
+main()

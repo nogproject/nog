@@ -1,0 +1,21 @@
+#!/bin/bash
+
+set -o errexit -o nounset -o pipefail -o noglob
+
+# Recursive deref of symlinks to locate the original requires GNU coreutils
+# readlink.
+
+xreadlink=
+for p in greadlink readlink; do
+    if type ${p} >/dev/null 2>&1 &&
+        ( ${p} --help 2>/dev/null | grep -q 'GNU coreutils' ); then
+        xreadlink="${p}"
+        break
+    fi
+done
+test ${xreadlink} || {
+    echo 'Error: Missing GNU coreutils readlink.'
+    exit 1
+}
+
+exec ${xreadlink} "$@"

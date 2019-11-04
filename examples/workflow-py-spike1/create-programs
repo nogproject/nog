@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+
+from copy import copy, deepcopy
+from datetime import datetime
+import json
+import nog
+import os
+import random
+import string
+
+repo = 'fake_programs_2015'
+
+package = {
+    'name': 'celltracking',
+    'description': (
+            'Program for cell tracking of phase-contract chemotaxi timeseries'
+        ),
+    'authors': [{'name': 'Marc Osterland'}]
+}
+
+program = {
+    'platform': {
+        'dependencies': [
+            {
+                'name': 'python2',
+                'requirements': [
+                    'numpy', 'scipy', 'urllib3', 'pyOpenSSL==0.13',
+                    'ndg-httpsclient', 'pyasn1', 'requests', 'matplotlib',
+                    'pandas', 'cython', 'pyEMMA'
+                ]
+            },
+            {'name': 'opencv3'}
+        ]
+    },
+    'args': [],
+    'code': {
+        'archives': []  # Will be filled below.
+    },
+    'params': {}
+}
+
+def main():
+    (remote, master) = ensureProgramsRepo(repo)
+    root = master.tree
+
+    # Set package tree info.
+    try:
+        ptree = next(root.trees('celltracking'))
+    except StopIteration:
+        ptree = nog.Tree()
+        root.append(ptree)
+    ptree.name = package['name']
+    ptree.meta['description'] = package['description']
+    ptree.meta['package'] = deepcopy(package)
+
+    # Add program version.
+    prg = nog.Tree()
+    timetag = datetime.utcnow().strftime('%Y-%m-%dT%H%M%SZ')
+    prg.name = package['name'] + '@' + timetag
+    prg.meta['description'] = package['description']
+    # semver
+    package['version'] = {'major': 0, 'minor': 0, 'patch': 1}
+    # or simple time-based snapshot scheme.
+    package['version'] = {'date': timetag}
+    prg.meta['package'] = deepcopy(package)
+    ar = nog.Object()
+    ar.name = 'code.tar.xz'
+    prg.append(ar)
+    program['code']['archives'].append({'name': ar.name, 'sha1': ar.sha1})
+    prg.meta['program'] = program
+    ptree.insert(0, prg)
+
+    master = remote.commitTree(
+            subject='Update package `celltracking`',
+            tree=root, parent=master.sha1
+        )
+    print(master.sha1, stringify_pretty(master.content))
+
+
+# Either create a repo; or check that the existing repo has the expected kind
+# tag.
+def ensureProgramsRepo(repo):
+    try:
+        remote = nog.openRepo(repo)
+        master = remote.getMaster()
+    except RuntimeError as err:
+        if 'ERR_REPO_MISSING' not in str(err):
+            raise
+        remote = nog.createRepo(repo)
+        master = remote.getMaster()
+        root = emptyRootTree()
+        master = remote.commitTree(
+                subject='Create program package registry',
+                tree=root, parent=master.sha1)
+
+    root = master.tree
+    if 'programs' not in root.meta:
+        raise RuntimeError('Root tree without `meta.programs`.')
+    return (remote, master)
+
+
+def emptyRootTree():
+    root = nog.Tree()
+    root.name = 'Program packages'
+    root.meta['programs'] = {}
+    return root
+
+
+def omit(d, *args):
+    d = copy(d)
+    for k in args:
+        del d[k]
+    return d
+
+
+def stringify_pretty(d):
+    return json.dumps(d, sort_keys=True, ensure_ascii=False, indent=2) + '\n'
+
+
+main()

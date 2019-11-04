@@ -1,0 +1,50 @@
+{
+  "name": "packages-testapp",
+  "private": true,
+  "scripts": {
+    "start": "echo 'start: error: The Meteor app is only used for package testing.  See `meteor npm run`.' && echo && exit 1",
+    "test": "npm run test-packages-headless-nog",
+    "ls-test-packages": "grep -li ontest packages/*/package.js | cut -d / -f 2",
+    "ls-test-packages-nog": "npm run ls-test-packages | grep ^nog-",
+    "test-packages-watch": "TEST_WATCH=1 meteor test-packages --driver-package meteortesting:mocha",
+    "test-packages-headless": "TEST_BROWSER_DRIVER=chrome meteor --once test-packages --driver-package meteortesting:mocha",
+    "test-packages-watch-nog": "npm run test-packages-watch -- $(npm run --silent ls-test-packages-nog)",
+    "test-packages-headless-nog": "npm run test-packages-headless -- $(npm run --silent ls-test-packages-nog)",
+    "test-packages-watch-nog-example-2": "npm run test-packages-watch -- nog-example-2",
+    "test-packages-headless-nog-example-2": "npm run test-packages-headless -- nog-example-2",
+    "test-packages-watch-nog-error-2": "npm run test-packages-watch -- nog-error-2",
+    "test-packages-headless-nog-error-2": "npm run test-packages-headless -- nog-error-2",
+    "test-packages-watch-nog-access-2": "npm run test-packages-watch -- nog-access-2",
+    "test-packages-headless-nog-access-2": "npm run test-packages-headless -- nog-access-2",
+    "test-packages-watch-nog-settings-2": "npm run test-packages-watch -- nog-settings-2",
+    "test-packages-headless-nog-settings-2": "npm run test-packages-headless -- nog-settings-2",
+    "test-packages-watch-nog-rest-2": "npm run test-packages-watch -- nog-rest-2",
+    "test-packages-headless-nog-rest-2": "npm run test-packages-headless -- nog-rest-2",
+    "test-packages-watch-nog-fso-authz": "npm run test-packages-watch -- nog-fso-authz",
+    "test-packages-headless-nog-fso-authz": "npm run test-packages-headless -- nog-fso-authz",
+    "test-packages-watch-nog-cluster-2": "npm run test-packages-watch -- nog-cluster-2",
+    "test-packages-headless-nog-cluster-2": "npm run test-packages-headless -- nog-cluster-2",
+    "test-packages-watch-nog-accounts": "npm run test-packages-watch -- nog-accounts",
+    "test-packages-headless-nog-accounts": "npm run test-packages-headless -- nog-accounts",
+    "test-packages-watch-nog-ready-jwts": "npm run test-packages-watch -- nog-ready-jwts",
+    "test-packages-headless-nog-ready-jwts": "npm run test-packages-headless -- nog-ready-jwts"
+  },
+  "dependencies": {
+    "@babel/runtime": "^7.1.5",
+    "body-parser": "^1.18.3",
+    "connect": "^3.6.6",
+    "jsonwebtoken": "^8.5.1",
+    "ldapjs": "^1.0.2",
+    "meteor-node-stubs": "^0.4.1",
+    "node-forge": "^0.8.2",
+    "path-to-regexp": "^3.0.0",
+    "underscore": "^1.9.1"
+  },
+  "devDependencies": {
+    "chai": "^4.2.0",
+    "chromedriver": "^2.46.0",
+    "selenium-webdriver": "^3.6.0",
+    "sinon": "^7.2.7",
+    "sinon-chai": "^3.3.0"
+  }
+}

@@ -1,0 +1,387 @@
+#!/usr/bin/env python3
+
+from binascii import hexlify
+from copy import copy
+from datetime import datetime
+from random import getrandbits
+from subprocess import check_output
+from textwrap import dedent
+from urllib.parse import urlparse
+import hashlib
+import hmac
+import json
+import os
+import os.path
+import re
+import requests
+import sys
+
+
+usage = '''\
+usage: nog-post-tree-json
+
+`nog-post-tree-json` reads an expanded nog tree JSON that has been created with
+`stdtools-repo-to-nog-tree-json` from stdin and creates the objects and trees
+in a Nog app.
+
+If the JSON contains blobs, `nog-post-tree-json` must be run in the root of the
+working copy that contains the corresponding files.
+
+The evironment variables `NOG_USER_NAME`, `NOG_KEYID`, and `NOG_SECRETKEY` must
+contain access credentials.
+
+`NOG_API_URL` can be set to configure the URL of the Nog application API.  The
+default is `http://localhost:3000/api`.
+
+Blobs upload to S3 is not yet implemented.
+
+'''
+
+
+repoFullName = None  # Will be set below.
+urlbase = os.environ.get('NOG_API_URL', 'http://localhost:3000/api') + '/repos'
+contentTypeJSON = {'Content-Type': 'application/json'}
+
+
+def main():
+    global repoFullName
+
+    argparse()
+
+    d = json.load(sys.stdin)
+    tree = d['tree']
+    commitInfo = d['commit']
+
+    userName = os.environ['NOG_USER_NAME']
+    repoFullName = '/'.join([userName, commitInfo['stdRepoName']])
+
+    oldCommitId = getMaster()
+    treeIdLocal = computeTreeId(tree)
+    if not isNullSha1(oldCommitId):
+        c = getCommit(oldCommitId)
+        if c['tree']['sha1'] == treeIdLocal:
+            print("The tree has not been modified since the previous upload.")
+            sys.exit(0)
+
+    treeId = postTree(tree)
+    if treeId != treeIdLocal:
+        msg = "Locally computed tree id '{0}' and id from upload '{1}' differ."
+        msg = msg.format(treeIdLocal, treeId)
+        raise RuntimeError(msg)
+
+    ci = commitInfo
+    ci['abbrevId'] = ci['id'][0:8]
+    commit = {
+        'subject': (
+                "{stdRepoName}@{abbrevId} '{subject}'"
+            ).format(**ci),
+        'message': dedent("""\
+                Imported from repo {stdRepoName} [{abbrevId}].
+
+                {message}
+
+                [{abbrevId}]: {stdRepoName}@{id} '{subject}'
+            """).format(**ci),
+        'tree': treeId,
+        'parents': [],
+        'authors': [ci['author']],
+        'authorDate': ci['authorDate'],
+        'committer': ci['committer'],
+        'commitDate': ci['commitDate'],
+        'meta': {
+            'stdRepoName': ci['stdRepoName'],
+            'gitCommitId': ci['id']
+        }
+    }
+    if not isNullSha1(oldCommitId):
+        commit['parents'].append(oldCommitId)
+    commitId = postCommit(commit)
+    updateRef('branches/master', commitId, oldCommitId)
+    print(commitId)
+
+
+def argparse():
+    if len(sys.argv) < 2:
+        return
+    if (sys.argv[1] == '-h') or (sys.argv[1] == '--help'):
+        print(usage)
+        sys.exit(1)
+
+
+def getMaster():
+    try:
+        commitId = getRef('branches/master')
+    except RuntimeError:
+        postRepo()
+        commitId = getRef('branches/master')
+    return commitId
+
+
+def computeTreeId(tree):
+    entries = []
+    for e in tree['entries']:
+        if 'blob' in e:  # Object
+            objId = computeObjectId(e)
+            entries.append({'type': 'object', 'sha1': objId})
+        elif 'entries' in e:  # Tree
+            treeId = computeTreeId(e)
+            entries.append({'type': 'tree', 'sha1': treeId})
+        else:
+            raise RuntimeError('Unknown entry type.')
+    tree = copy(tree)
+    tree['entries'] = entries
+    return computeContentId(tree)
+
+
+def computeObjectId(content):
+    if not content['blob']:
+        content = copy(content)
+        content['blob'] = '0000000000000000000000000000000000000000'
+    return computeContentId(content)
+
+
+def computeContentId(e):
+    h = hashlib.sha1()
+    h.update(stringify_canonical(e))
+    return h.hexdigest()
+
+
+def postTree(tree, prefix=None):
+    prefix = prefix or ''
+    entries = []
+    for e in tree['entries']:
+        fullPath = prefix + e['name']
+        if 'blob' in e:  # Object
+            blob = e['blob']
+            if isContentBlob(blob):
+                uploadBlob(blob, e['name'], fullPath)
+            objId = postObject(e)
+            entries.append({'type': 'object', 'sha1': objId})
+        elif 'entries' in e:  # Tree
+            treeId = postTree(e, prefix=(fullPath + '/'))
+            entries.append({'type': 'tree', 'sha1': treeId})
+        else:
+            raise RuntimeError('Unknown entry type.')
+    tree = copy(tree)
+    tree['entries'] = entries
+    return postSimpleTree(tree)
+
+
+def uploadBlob(blob, name, path):
+    sha1 = sha1_hex(path)
+    if sha1 != blob:
+        msg = "Sha1 mismatch for '{0}'; expected '{1}', got '{2}'."
+        msg = msg.format(path, blob, sha1)
+        raise RuntimeError(msg)
+
+    content =  {'size': os.path.getsize(path), 'name': name}
+    print("Uploading '{0}', {1} ... ".format(path, content), end='')
+    sys.stdout.flush()
+    res = startUpload(blob, content)
+    if not res:
+        print('already available.')
+        return
+    completeUploadUrl = res["upload"]["href"]
+    s3Parts = []
+    parts = res["parts"]
+    while True:
+        part = parts["items"][0]
+        etag = putS3(part, path)
+        s3Parts.append({
+                'PartNumber': part["partNumber"],
+                'ETag': etag
+            })
+        nextPartUrl = parts["next"]
+        if not nextPartUrl:
+            break
+        parts = getNextUploadParts(nextPartUrl)
+    postCompleteUpload(completeUploadUrl, s3Parts)
+    print('ok.')
+
+
+def startUpload(sha1, content):
+    # Limit to a single part, because parts are uploaded sequentially.
+    url = '{0}/{1}/db/blobs/{2}/uploads?limit=1'.format(
+            urlbase, repoFullName, sha1
+        )
+    url = sign_req('POST', url)
+    res = requests.post(url, headers=contentTypeJSON, data=json.dumps(content))
+    if res.status_code == 409:  # Blob already exists
+        return None
+    checkStatus(res, 201)
+    return res.json()["data"]
+
+
+def putS3(part, path):
+    start = part["start"]
+    end = part["end"]
+    with open(path, 'rb') as fp:
+        fp.seek(start)
+        data = fp.read(end - start)
+    res = requests.put(part["href"], data=data)
+    res.raise_for_status()
+    return res.headers["etag"]
+
+
+def getNextUploadParts(url):
+    url = sign_req('GET', url)
+    res = requests.get(url)
+    checkStatus(res, 200)
+    return res.json()["data"]
+
+
+def postCompleteUpload(url, parts):
+    url = sign_req('POST', url)
+    content = {'s3Parts': parts}
+    res = requests.post(url, headers=contentTypeJSON, data=json.dumps(content))
+    checkStatus(res, 201)
+    return res.json()["data"]
+
+
+def getRef(refName):
+    url = '{0}/{1}/db/refs/{2}'.format(urlbase, repoFullName, refName)
+    url = sign_req('GET', url)
+    res = requests.get(url)
+    checkStatus(res, 200)
+    return res.json()["data"]["entry"]["sha1"]
+
+
+def updateRef(refName, newCommit, oldCommit):
+    url = '{0}/{1}/db/refs/{2}'.format(urlbase, repoFullName, refName)
+    url = sign_req('PATCH', url)
+    content = {
+        'new': newCommit,
+        'old': oldCommit
+    }
+    res = requests.patch(url, headers=contentTypeJSON, data=stringify(content))
+    checkStatus(res, 200)
+    return res.json()["data"]
+
+
+def postRepo():
+    url = urlbase
+    url = sign_req('POST', url)
+    content = {
+        'repoFullName': repoFullName
+    }
+    res = requests.post(url, headers=contentTypeJSON, data=stringify(content))
+    checkStatus(res, 201)
+    return res.json()["data"]
+
+
+def getCommit(commitId):
+    url = '{0}/{1}/db/commits/{2}'.format(urlbase, repoFullName, commitId)
+    url = sign_req('GET', url)
+    res = requests.get(url)
+    checkStatus(res, 200)
+    return res.json()["data"]
+
+
+def postCommit(content):
+    url = '{0}/{1}/db/commits'.format(urlbase, repoFullName)
+    url = sign_req('POST', url)
+    res = requests.post(url, headers=contentTypeJSON, data=stringify(content))
+    checkStatus(res, 201)
+    return res.json()["data"]["_id"]["sha1"]
+
+
+def postObject(content):
+    url = '{0}/{1}/db/objects'.format(urlbase, repoFullName)
+    url = sign_req('POST', url)
+    if not content['blob']:
+        content = copy(content)
+        content['blob'] = '0000000000000000000000000000000000000000'
+    res = requests.post(url, headers=contentTypeJSON, data=stringify(content))
+    checkStatus(res, 201)
+    return res.json()['data']['_id']['sha1']
+
+
+def postSimpleTree(tree):
+    url = '{0}/{1}/db/trees'.format(urlbase, repoFullName)
+    url = sign_req('POST', url)
+    content = {
+        'tree': tree
+    }
+    res = requests.post(url, headers=contentTypeJSON, data=stringify(content))
+    checkStatus(res, 201)
+    return res.json()["data"]["_id"]["sha1"]
+
+
+def checkStatus(res, expectedStatusCode):
+    if res.status_code == expectedStatusCode:
+        return
+    try:
+        data = res.json()
+    except ValueError:
+        data = 'no response JSON.'
+    msg = 'Unexpected status code; expected {0}, got {1}: {2}'
+    msg = msg.format(expectedStatusCode, res.status_code, data)
+    raise RuntimeError(msg)
+
+
+def sign_req(method, url):
+    authkeyid = os.environ['NOG_KEYID']
+    secretkey = os.environ['NOG_SECRETKEY'].encode()
+    authalgorithm = 'nog-v1'
+    authdate = datetime.utcnow().strftime('%Y-%m-%dT%H%M%SZ')
+    authexpires = '600'
+    authnonce = ('%x' % getrandbits(40))
+
+    parsed = urlparse(url)
+    if parsed.query == '':
+        path = parsed.path
+        suffix = '?'
+    else:
+        path = parsed.path + '?' + parsed.query
+        suffix = '&'
+    suffix = suffix + 'authalgorithm=' + authalgorithm
+    suffix = suffix + '&authkeyid=' + authkeyid
+    suffix = suffix + '&authdate=' + authdate
+    suffix = suffix + '&authexpires=' + authexpires
+    suffix = suffix + '&authnonce=' + authnonce
+
+    stringToSign = (method + '\n' + path + suffix + '\n').encode()
+    authsignature = hexlify(hmac.new(
+            secretkey, stringToSign, digestmod=hashlib.sha256
+        ).digest()).decode()
+    suffix = suffix + '&authsignature=' + authsignature
+    return url + suffix
+
+
+def isContentBlob(blob):
+    if not blob:
+        return False
+    if isNullSha1(blob):
+        return False
+    return True
+
+
+def isNullSha1(sha1):
+    return (sha1 == '0000000000000000000000000000000000000000')
+
+
+def stringify_canonical(d):
+    return json.dumps(
+            d, sort_keys=True, ensure_ascii=False, separators=(',', ':')
+        ).encode('utf-8')
+
+
+def stringify(d):
+    return json.dumps(
+            d, ensure_ascii=False, separators=(',', ':')
+        ).encode('utf-8')
+
+
+def sha1_hex(path):
+    BLOCKSIZE = 8 * 1024
+    h = hashlib.sha1()
+    with open(path, 'rb') as fp:
+        while True:
+            buf = fp.read(BLOCKSIZE)
+            if len(buf) == 0:
+                break
+            h.update(buf)
+    return h.hexdigest()
+
+
+main()

@@ -1,0 +1,14 @@
+{
+  "CN": "nog dev CA",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "DE",
+      "O": "ZIB",
+      "OU": "nog-ca"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+# vim: sw=2
+
+# Create and update the catalog Nog repo with:
+#
+# ```
+# catroot=~/2017/nog-internal-research_fuimages_2017/catalog-maintainer_2017-01
+#
+# ${catroot}/tools/bin/catalog-config \
+#   --local dev_test-catalog_2017-12 dev_test-catalog_2017-12.yml
+# ```
+#
+# To format as a catalog config JSON for `nogfsoctl`:
+#
+# ```
+# config="$(cat packages/nog-catalog-fso/tests/manual/dev_test-catalog_2017-12.yml | yq '. | tojson')"
+# json="$(printf '{"catalog": {"config": %s}}' "${config}" | jq .)"
+# printf "%s\n" "${json}"
+#
+# repoId=...
+# nogfsoctl gitnog put-path-metadata --author='a <b@c>' --message=catalog ${repoId} ".=${json}"
+# ```
+
+preferredMetaKeys: []
+contentRepoConfigs:
+  - repoSelector: { owner: 'alovelace', name: { $regex: '.*' } }
+    pipeline:
+      - $select: { path: { $regex: '.*' } }
+
+  - repoSelector: { $fso: { path: { $regex: '^/example/.*' } } }
+    pipeline:
+      - $select: { path: { $regex: '.*' } }
+      - $updateMeta:
+          $select: { meta.keywords: { $exists: true } }
+          $set: { keywords: { $splitField: { field: 'meta.keywords' } } }
+      - $updateMeta:
+          $select: { path: { $regex: '^/example/orgfs/org/ag-alice/' } }
+          $addToSet: { topic: 'alice' }
+      - $updateMeta:
+          $select: { path: { $regex: '^/example/orgfs/org/ag-alice/projects/prj-A/' } }
+          $addToSet: { zib_project: 'projectA' }

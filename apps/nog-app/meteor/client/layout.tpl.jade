@@ -1,0 +1,14 @@
+if optTestingUsers
+  .container-fluid
+    +testConfig
+
+unless optHideDisclaimer
+  +disclaimer
+
++header
+
+.container-fluid
+  +announcements
+  +errorDisplay
+  +Template.dynamic(template=main data=globals)
++footer

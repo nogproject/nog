@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+service Broadcast {
+    rpc Events(BroadcastEventsI) returns (stream BroadcastEventsO);
+}
+
+service GitBroadcaster {
+    rpc PostGitRefUpdated(PostGitRefUpdatedI) returns (PostGitRefUpdatedO);
+}
+
+service LiveBroadcast {
+    rpc AggregateSignals(AggregateSignalsI) returns (stream AggregateSignalsO);
+}
+
+message BroadcastEventsI {
+    string channel = 1;
+    bytes after = 2;
+    bool afterNow = 4;
+    bool watch = 3;
+}
+
+message BroadcastEventsO {
+    string channel = 1;
+    repeated BroadcastEvent events = 2;
+    bool will_block = 3;
+}
+
+// `BroadcastEvent` is a subset of the full `nogevents.Event` message.
+message BroadcastEvent {
+    enum Type {
+        EV_UNSPECIFIED = 0;
+
+        // reserved 40 to 49; // broadcast
+        EV_BC_FSO_MAIN_CHANGED = 41;
+        EV_BC_FSO_REGISTRY_CHANGED = 42;
+        EV_BC_FSO_REPO_CHANGED = 43;
+        EV_BC_FSO_GIT_REF_UPDATED = 44;
+    }
+
+    // reserved 1 to 9; // common event header
+    Type event = 1;
+    bytes id = 2;
+    bytes parent = 3;
+    reserved 4 to 9; // future common header use
+
+    reserved 30 to 39; // fsorepos
+
+    // reserved 40 to 49; // broadcast
+    BcChange bc_change = 41;
+
+    reserved 50 to 59; // unallocated
+}
+
+message BcChange {
+    bytes entity_id = 1;
+
+    // XXX `event_id` is currently unused.  It could be used to include the
+    // latest entity event seen by the broadcaster.  But the broadcast is not
+    // sequential anyway and may skip events, so the `event_id` is of limited
+    // value.  Perhaps it should be dropped.
+    bytes event_id = 2;
+
+    string git_ref = 3;
+    bytes git_commit = 4;
+}
+
+message PostGitRefUpdatedI {
+    bytes repo = 1;
+    string ref = 2;
+    bytes commit = 3;
+}
+
+message PostGitRefUpdatedO {
+}
+
+message AggregateSignalsI {
+    enum AggregateSelector {
+        AS_UNSPECIFIED = 0;
+        AS_MAIN = 1;
+        AS_REGISTRY = 2;
+        AS_REPO = 3;
+        AS_WORKFLOW = 4;
+        AS_EPHEMERAL_WORKFLOW = 5;
+    }
+    // If `select_aggregates` is non-empty, signals are delivered only for the
+    // selected aggregate types.
+    repeated AggregateSelector select_aggregates = 1;
+}
+
+message AggregateSignal {
+    enum AggregateType {
+        AT_UNSPECIFIED = 0;
+        AT_MAIN = 1;
+        AT_REGISTRY = 2;
+        AT_REPO = 3;
+        AT_WORKFLOW = 4;
+        AT_EPHEMERAL_WORKFLOW = 5;
+    }
+
+    // `Signal` values can be combined with bitwise or.
+    enum Signal {
+        S_UNSPECIFIED = 0x00;
+        S_UPDATED = 0x01;
+    }
+
+    AggregateType aggregate_type = 1;
+    // `signals` are `Signal` values packed with bitwise or.
+    uint32 signals = 2;
+    bytes entity_id = 3;
+}
+
+message AggregateSignalsO {
+    repeated AggregateSignal signals = 1;
+}

@@ -1,0 +1,1 @@
+MarkdownToc = require('markdown-toc');

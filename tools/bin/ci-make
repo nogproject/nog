@@ -1,0 +1,66 @@
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+
+if ! [ ${BASH_VERSINFO[0]} -ge 4 ]; then
+    echo >&2 "fatal: require bash >= 4."
+    exit 1
+fi
+
+# When running in a CI environment, use a project name that does not depend on
+# the job ID to share volumes across builds.  Volumes contain caches, for
+# example Go packages, which would be expensive to rebuild from scratch.
+if [[ -v CI_PROJECT_NAME ]]; then
+    export COMPOSE_PROJECT_NAME="${CI_PROJECT_NAME}--ci"
+else
+    echo 'ci-make: Using default Docker Compose project name.'
+fi
+
+# Push to the project image registry provided by GitLab.
+if [[ -v CI_REGISTRY_IMAGE ]]; then
+    registry="${CI_REGISTRY_IMAGE}"
+else
+    echo 'ci-make: Building local images that cannot be pushed.'
+    registry=
+fi
+
+# Log in if running in a CI environment that requires a password.
+if [[ -v CI_REGISTRY_PASSWORD ]]; then
+    echo '    DOCKER LOGIN'
+    docker login \
+        -u "${CI_REGISTRY_USER}" -p "${CI_REGISTRY_PASSWORD}" "${CI_REGISTRY}"
+else
+    echo '    SKIP docker login'
+fi
+
+# A CI environment can explicitly set a registry for the dev images or
+# explicitly force using local dev images.  Otherwise, the project registry is
+# used.  Pull is skipped for local testing.
+if [[ -v DEV_IMAGE_REGISTRY ]]; then
+    if [ -n "${DEV_IMAGE_REGISTRY}" ]; then
+        make pull-dev-images
+    else
+        echo 'ci-make: Explicitly using local dev images.'
+    fi
+elif [[ -v CI_REGISTRY_IMAGE ]]; then
+    export DEV_IMAGE_REGISTRY="${CI_REGISTRY_IMAGE}/"
+    make pull-dev-images
+else
+    echo 'ci-make: Using local dev images.'
+fi
+
+# Clean to ensure that the CI artifacts include only the latest products.
+echo '    CLEAN product'
+rm -rf 'product/bin' 'product/deb'
+
+# Do not explicitly `make binaries deb docker`, because `docker` implies the
+# other targets, and because they are all phony targets, making the other
+# targets explicitly would make them multiple times.
+NOG_IMAGE_REGISTRY="${registry}" make docker
+
+# Push only if running as a real CI job.  Skipping is useful for local testing.
+if [[ -v CI_REGISTRY_IMAGE ]]; then
+    yq <product/docker-images.yml '.[]' -r | while read -r img; do
+        echo "    DOCKER PUSH ${img}"
+        docker push "${img}"
+    done
+fi

@@ -1,0 +1,48 @@
+template(name='nogPlateViewIcon')
+  i.fa.fa-building-o.fa-rotate-90
+
+
+template(name='plateView')
+  h2 Plate: #{platename}
+  if description
+    p #{description}
+  if Template.subscriptionsReady
+    table.nog-plateview-table
+      tr
+        each getTableHeaders
+          th.nog-plateview-colname #{.}
+      each getRows
+        tr
+          td.nog-plateview-rowname #{name}
+          each entries
+            if isThere
+              if background
+                td(style='background-color: #{background}').nog-plateview-well
+                  a(href='#{href}' data-toggle='tooltip' data-placement='bottom'
+                  title='#{tooltip}') #{content}
+              else
+                td.nog-plateview-well
+                  a(href='#{href}' data-toggle='tooltip' data-placement='bottom'
+                  title='#{tooltip}') #{content}
+            else
+              td.nog-plateview-well
+
+    if hasResults
+      +contentDropdown
+    if mayAutoscale
+      button.btn.btn-primary.js-plate-autoscale Autoscale
+
+  else
+    p Loading tree information...
+
+
+template(name='contentDropdown')
+  span.dropdown
+    button.btn.btn-default.dropdown-toggle(
+    type='button' data-toggle='dropdown'
+    ) Content
+      span.caret
+    ul.dropdown-menu
+      each entries
+        li(role='presentation')
+          a.js-platecontent(role='menuitem' tabindex='-1') #{.}

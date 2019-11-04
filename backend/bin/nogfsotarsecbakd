@@ -1,0 +1,215 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+semver='0.2.0-dev'
+
+version() {
+    echo "nogfsotarsecbakd-${semver}"
+    exit 0
+}
+
+usage() {
+    cat <<\EOF
+Usage:
+    nogfsotarsecbakd [--config <config>]
+
+Options:
+    <config>  [default: /etc/nog/nogfsotarsecbakdconfig.sh]
+        The config file.
+
+`nogfsotarsecbakd` creates regular backups of a selection of files from a
+directory tree.  The details are controlled by `<config>`.  `nogfsotarsecbakd`
+is usually used to maintain backups of `secret` and `secret.asc` files of tartt
+repos, with a `cfgOrigin` like:
+
+```
+cfgOrigins='
+backup-name /path/to/tartt -name secret -o -name secret.asc
+'
+```
+
+EOF
+    exit 1
+}
+
+main() {
+    argparse "$@"
+    readConfig
+    process
+}
+
+argparse() {
+    arg_config='/etc/nog/nogfsotarsecbakdconfig.sh'
+    while [ $# -gt 0 ]; do
+        case $1 in
+        -h|--help)
+            usage
+            ;;
+        --version)
+            version
+            ;;
+        --config)
+            if [ $# -lt 2 ]; then
+                die "--config requires value."
+            fi
+            arg_config="$2"
+            shift 2
+            ;;
+        *)
+            die "unknown argument."
+            ;;
+        esac
+    done
+}
+
+# Lines <var> <eregex>.
+configVariables='
+cfgBackupDir ^/\S+$
+cfgCheckMinDf ^/\S+\s+[0-9]+$
+cfgInterval ^[1-9][0-9]*m$
+cfgOrigins ^[a-z0-9_-]+\s/\S+\s-\S.*$
+cfgBuckets ^[a-z]+\s[1-9][0-9]*\s-\S.*$
+'
+
+readConfig() {
+    if ! [ -f "${arg_config}" ]; then
+        die "Missing config file \`${arg_config}\`."
+    fi
+
+    source "${arg_config}"
+
+    if [ -v cfgBackupRecipients ]; then
+        logwarn 'DEPRECATED: Remove `cfgBackupRecipients` from the config.  Encryption support has been dropped in favor of assuming that the original files are encrypted, like `secret.asc`, if encryption is desired.'
+        unset cfgBackupRecipients
+    fi
+
+    while read -r var ergx; do
+        if [ -z "${ergx}" ]; then
+            continue
+        fi
+        if ! egrep -q -e "${ergx}" <<< "${!var}"; then
+            die "Malformed config variable \`${var}\`."
+        fi
+    done <<< "${configVariables}"
+}
+
+process() {
+    cd "${cfgBackupDir}"
+    log "Changed to backup dir: ${cfgBackupDir}"
+    while true; do
+        if checkFreeSpace; then
+            backupOrigins
+        else
+            logerr "Skipped backup: insufficient free disk space."
+        fi
+        log "Next backup in ${cfgInterval}."
+        sleep ${cfgInterval}
+    done
+}
+
+checkFreeSpace() {
+    local res=0
+    local path minDf
+    while read -r path minDf; do
+        if [ -z "${minDf}" ]; then
+            continue
+        fi
+        if [ "$(df --output=avail "${path}" | tail -n 1)" -ge ${minDf} ]; then
+            continue
+        fi
+        res=1
+        logerr "Free disk space ${path} < ${minDf}k"
+    done <<<"${cfgCheckMinDf}"
+    return ${res}
+}
+
+backupOrigins() {
+    while read -r name dir findArgs; do
+        if [ -z "${findArgs}" ]; then
+            continue
+        fi
+        backupOrigin "${name}" "${dir}" ${findArgs}
+    done <<<"${cfgOrigins}"
+}
+
+backupOrigin() {
+    local name="$1"
+    local dir="$2"
+    shift 2
+
+    log "Started backup. [name ${name} dir ${dir} find $*]"
+    mkdir -p "${name}"
+
+    local tmpdir="${name}/tmp"
+    rm -rf "${tmpdir}"
+    mkdir "${tmpdir}"
+
+    ts="$(date -u +%Y%m%dT%H%M%SZ)"
+    tmp="${tmpdir}/${ts}.tar"
+    (
+        cd "${dir}" \
+        && find . '(' "$@" ')' -print0 | tar -cf- --null --files-from=-
+    ) \
+    > "${tmp}"
+
+    addBackup "${name}" "${tmp}"
+
+    rm -rf "${tmpdir}"
+
+    log "Completed backup. [name ${name} dir ${dir} find $*]"
+}
+
+addBackup() {
+    local name="$1"
+    local tar="$2"
+
+    printf '%s' "${cfgBuckets}" \
+    | while read -r bucket nMax selCurrent; do
+        if [ -z "${selCurrent}" ]; then
+            continue
+        fi
+        addBackupBucket "${name}" "${tar}" "${bucket}" "${nMax}" "${selCurrent}"
+    done
+}
+
+addBackupBucket() {
+    local name="$1"
+    local tar="$2"
+    local bucket="$3"
+    local nMax="$4"
+    local selCurrent="$5"
+
+    local bucketDir="${name}/${bucket}"
+
+    mkdir -p "${bucketDir}"
+    if [ -n "$(find "${bucketDir}" -type f ${selCurrent})" ]; then
+        return
+    fi
+
+    local base="${name}_$(basename "${tar}")"
+    ln "${tar}" "${bucketDir}/${base}"
+    log "Added \`${bucketDir}/${base}\`."
+
+    find "${bucketDir}" -type f \
+    | sort \
+    | head -n -${nMax} \
+    | while read -r path; do
+        rm -- "${path}"
+        log "Removed \`${path}\`."
+    done
+}
+
+log() {
+    echo >&2 "$(date -Iseconds -u)" '[nogfsotarsecbakd]' "$@"
+}
+
+logwarn() {
+    log 'warning:' "$@"
+}
+
+logerr() {
+    log 'error:' "$@"
+}
+
+main "$@"

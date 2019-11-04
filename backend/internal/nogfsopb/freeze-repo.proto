@@ -1,0 +1,203 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+import "job-control.proto";
+// import "status.proto"; // implicit use of enum StatusCode.
+
+service FreezeRepo {
+    rpc BeginFreezeRepo(BeginFreezeRepoI) returns (BeginFreezeRepoO);
+    rpc CommitFreezeRepo(CommitFreezeRepoI) returns (CommitFreezeRepoO);
+    rpc AbortFreezeRepo(AbortFreezeRepoI) returns (AbortFreezeRepoO);
+    rpc GetFreezeRepo(GetFreezeRepoI) returns (GetFreezeRepoO);
+
+    rpc BeginFreezeRepoFiles(BeginFreezeRepoFilesI) returns (BeginFreezeRepoFilesO);
+    rpc CommitFreezeRepoFiles(CommitFreezeRepoFilesI) returns (CommitFreezeRepoFilesO);
+    rpc AbortFreezeRepoFiles(AbortFreezeRepoFilesI) returns (AbortFreezeRepoFilesO);
+}
+
+service RegistryFreezeRepo {
+    rpc RegistryBeginFreezeRepo(RegistryBeginFreezeRepoI) returns (RegistryBeginFreezeRepoO);
+    rpc RegistryCommitFreezeRepo(RegistryCommitFreezeRepoI) returns (RegistryCommitFreezeRepoO);
+    rpc RegistryAbortFreezeRepo(RegistryAbortFreezeRepoI) returns (RegistryAbortFreezeRepoO);
+}
+
+service ReposFreezeRepo {
+    rpc ReposBeginFreezeRepo(ReposBeginFreezeRepoI) returns (ReposBeginFreezeRepoO);
+    rpc ReposCommitFreezeRepo(ReposCommitFreezeRepoI) returns (ReposCommitFreezeRepoO);
+    rpc ReposAbortFreezeRepo(ReposAbortFreezeRepoI) returns (ReposAbortFreezeRepoO);
+}
+
+message BeginFreezeRepoI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    bytes repo = 4;
+    bytes repo_vid = 5;
+    bytes workflow = 6;
+    string author_name = 7;
+    string author_email = 8;
+}
+
+message BeginFreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+    bytes repo_vid = 3;
+    bytes workflow_index_vid = 4;
+    bytes workflow_vid = 5;
+}
+
+message BeginFreezeRepoFilesI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message BeginFreezeRepoFilesO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message CommitFreezeRepoFilesI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message CommitFreezeRepoFilesO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message AbortFreezeRepoFilesI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    int32 status_code = 4; // StatusCode freeze-repo code.
+    string status_message = 5;
+}
+
+message AbortFreezeRepoFilesO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message CommitFreezeRepoI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message CommitFreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+    bytes workflow_index_vid = 3;
+}
+
+message AbortFreezeRepoI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    int32 status_code = 4; // StatusCode freeze-repo code.
+    string status_message = 5;
+}
+
+message AbortFreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+    bytes workflow_index_vid = 3;
+}
+
+message GetFreezeRepoI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    JobControl job_control = 3;
+}
+
+message GetFreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+    string registry = 3;
+    bytes repoId = 4;
+    int32 status_code = 5; // StatusCode common code or freeze-repo code.
+    string status_message = 6;
+}
+
+message RegistryBeginFreezeRepoI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    bytes repo = 4;
+    bytes workflow = 5;
+}
+
+message RegistryBeginFreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message RegistryCommitFreezeRepoI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    bytes repo = 4;
+    bytes workflow = 5;
+}
+
+message RegistryCommitFreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message RegistryAbortFreezeRepoI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    bytes repo = 4;
+    bytes workflow = 5;
+    int32 status_code = 6; // StatusCode freeze-repo code.
+}
+
+message RegistryAbortFreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message ReposBeginFreezeRepoI {
+    reserved 1; // Potential future header.
+    bytes repo = 2;
+    bytes repo_vid = 3;
+    bytes workflow = 4;
+}
+
+message ReposBeginFreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes repo_vid = 2;
+}
+
+message ReposCommitFreezeRepoI {
+    reserved 1; // Potential future header.
+    bytes repo = 2;
+    bytes repo_vid = 3;
+    bytes workflow = 4;
+}
+
+message ReposCommitFreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes repo_vid = 2;
+}
+
+message ReposAbortFreezeRepoI {
+    reserved 1; // Potential future header.
+    bytes repo = 2;
+    bytes repo_vid = 3;
+    bytes workflow = 4;
+    int32 status_code = 5; // StatusCode freeze-repo code.
+    string status_message = 6;
+}
+
+message ReposAbortFreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes repo_vid = 2;
+}

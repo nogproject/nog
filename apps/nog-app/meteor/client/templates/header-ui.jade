@@ -1,0 +1,62 @@
+template(name='header')
+  nav.navbar.navbar-default.navbar-static-top
+    .container-fluid
+
+      .navbar-header
+        +initTooltips
+          a.navbar-brand(
+              href='/' title='Home screen'
+              data-toggle='tooltip' data-placement='bottom')
+            span.glyphicon.glyphicon-blackboard
+
+        button.navbar-toggle.collapsed(
+            type='button'
+            data-toggle='collapse' data-target='.navbar-collapse')
+          span.sr-only Toggle navigation
+          span.icon-bar
+          span.icon-bar
+          span.icon-bar
+
+      .collapse.navbar-collapse
+        ul.nav.navbar-nav
+          if testAccess 'fso/home' path='/'
+            li
+              +initTooltips
+                a(
+                  href='/v2'
+                  title='Click and reload for UI v2'
+                  data-toggle='tooltip'
+                  data-placement='bottom'
+                ) v2
+        ul.nav.navbar-nav.navbar-right
+          if testAccess 'nog-content/get' style='loose'
+            li
+              +initTooltips
+                a(href='/search' title='Search'
+                    data-toggle='tooltip' data-placement='bottom')
+                  span.glyphicon.glyphicon-search
+          if testAccess 'accounts/adminView'
+            li
+              a(href='/admin') Admin
+          if currentUser
+            li
+              +initTooltips
+                a(href='/settings' title='Settings'
+                    data-toggle='tooltip' data-placement='bottom')
+                  span.glyphicon.glyphicon-cog
+          if testAccess 'isUser'
+            li
+              +initTooltips
+                a(href='/nog/doc/files' title='Help'
+                    data-toggle='tooltip' data-placement='bottom')
+                  span.glyphicon.glyphicon-question-sign
+          if currentUser
+            +loginButtons
+
+      with backref
+        .row.bg-primary.t-nogmodal
+          .col-xs-12
+            h4
+              button.btn.btn-primary.js-backref.t-nogmodal-back
+                i.fa.fa-arrow-left
+              | #{title}

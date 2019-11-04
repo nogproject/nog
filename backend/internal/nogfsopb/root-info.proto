@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+message FsoRootInfo {
+    string global_root = 1;
+    string host = 2;
+    string host_root = 3;
+    string gitlab_namespace = 4;
+}
+
+message PathDiskUsage {
+    string path = 1;
+    int64 usage = 2;
+}
+
+message FsoPathFlag {
+    // `Flag` values can be combined with bitwise or.
+    enum Flag {
+        PF_UNSPECIFIED = 0x00;
+        PF_DONT_SPLIT = 0x01;
+    }
+
+    reserved 1; // Potential future header.
+    string path = 2;
+    uint32 flags = 3;
+}
+
+message FsoSplitRootParams {
+    reserved 1; // Potential future header.
+    string global_root = 2;
+    int32 max_depth = 3;
+    int64 min_disk_usage = 4;
+    int64 max_disk_usage = 5;
+}
+
+message FsoSplitRootSuggestion {
+    enum Suggestion {
+        S_UNSPECIFIED = 0;
+
+        // `S_SMALL_DIR` indicates a directory that is not yet a repo and
+        // remains a directory, because its size is `< minSize`.
+        S_SMALL_DIR = 1;
+
+        // `S_REPO` indicates a repo.
+        S_REPO = 2;
+
+        // `S_SMALL_REPO` indicates a repo that has children and could in
+        // principle be split, but its size is `<= maxSize`.
+        S_SMALL_REPO = 3;
+
+        // `S_DONT_SPLIT` indicates a path that is flagged as `DONT_SPLIT`.
+        S_DONT_SPLIT = 4;
+
+        // `S_REPO_CANDIDATE` indicates a repo candidate.
+        S_REPO_CANDIDATE = 5;
+    }
+
+    reserved 1; // Potential future header.
+    string path = 2;
+    Suggestion suggestion = 3;
+}
+
+message FsoSplitRootDecision {
+    enum Decision {
+        D_UNSPECIFIED = 0;
+        D_CREATE_REPO = 1;
+        D_NEVER_SPLIT = 2;
+        D_IGNORE_ONCE = 3;
+    }
+
+    reserved 1; // Potential future header.
+    string path = 2;
+    Decision decision = 3;
+}
+
+message RepoAclPolicy {
+    enum Policy {
+        P_UNSPECIFIED = 0;
+        P_NO_ACLS = 1;
+        P_PROPAGATE_ROOT_ACLS = 2;
+    }
+
+    reserved 1; // Potential future header.
+    Policy policy = 2;
+    FsoRootInfo fso_root_info = 3;
+}

@@ -1,0 +1,187 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+semver='0.1.0'
+
+version() {
+    echo "nogfsotchd3-${semver}"
+    exit 0
+}
+
+nogfsotchd3="$(realpath "${BASH_SOURCE[0]}")"
+
+usage() {
+    cat <<\EOF
+Usage:
+    nogfsotchd3 [--config <config>]
+    nogfsotchd3 [--config <config>] process <repojson>
+
+Options:
+    <config>  [default: /etc/nog/nogfsotchd3config.sh]
+        The config file.
+
+`nogfsotchd3` regularly runs `nogfsoctl stat --mtime-range-only` to ensure that
+changes anywhere below a repo trigger a new `master-stat` commit and,
+therefore, a realdir tartt archive.
+
+`nogfsotchd3` is DEPRECATED, since `git-fso stat --mtime-range-only` has been
+integrated as a background task in `nogfsostad`,
+
+`nogfsotchd3` invokes itself as `nogfsotchd3 process ...` to process a
+repo.  `<repojson>` is the information that `nogfsoschd` passes to processing
+commands.
+
+EOF
+    exit 1
+}
+
+main() {
+    argparse "$@"
+    readConfig
+    main_${arg_cmd}
+}
+
+argparse() {
+    arg_cmd=server
+    arg_config='/etc/nog/nogfsotchd3config.sh'
+    while [ $# -gt 0 ]; do
+        case $1 in
+        -h|--help)
+            usage
+            ;;
+        --version)
+            version
+            ;;
+        --config)
+            if [ $# -lt 2 ]; then
+                die '--config requires an argument.'
+            fi
+            arg_config="$2"
+            shift 2
+            ;;
+        process)
+            arg_cmd="$1"
+            shift
+            break
+            ;;
+        *)
+            break
+            ;;
+        esac
+    done
+    argparse_${arg_cmd} "$@"
+}
+
+argparse_server() {
+    if [ $# -ne 0 ]; then
+        die 'unknown argument.'
+    fi
+}
+
+argparse_process() {
+    arg_repojson=
+    while [ $# -gt 0 ]; do
+        case $1 in
+        {*)
+            if [ -n "${arg_repojson}" ]; then
+                die 'unexpected argument.'
+            fi
+            arg_repojson="$1"
+            shift
+            ;;
+        *)
+            die 'unknown argument.'
+            ;;
+        esac
+    done
+    if [ -z "${arg_repojson}" ]; then
+        die 'missing <repojson>.'
+    fi
+}
+
+# Lines <var> <eregex>.
+configVariables='
+cfgStatAuthor ^[^<]+\s<[^>]+>$
+'
+
+configFunctions='
+cfgNogfsoschdTouch
+cfgNogfsoctlJwtAuth
+'
+
+readConfig() {
+    if ! [ -f "${arg_config}" ]; then
+        die "Missing config file \`${arg_config}\`."
+    fi
+
+    source "${arg_config}"
+
+    while read -r var ergx; do
+        if [ -z "${ergx}" ]; then
+            continue
+        fi
+        if ! egrep -q -e "${ergx}" <<< "${!var}"; then
+            die "Malformed config variable \`${var}\`."
+        fi
+    done <<< "${configVariables}"
+
+    for fn in ${configFunctions}; do
+        if ! isFunction ${fn}; then
+            die "Missing config function \`${fn}()\`."
+        fi
+    done
+}
+
+main_server() {
+    log 'Started nogfsoschd.'
+    cfgNogfsoschdTouch -- \
+        "${nogfsotchd3}" --config "${arg_config}" process
+}
+
+main_process() {
+    statMtimeRange "${arg_repojson}"
+}
+
+matchUuid() {
+    local ergx='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    egrep -q "${ergx}" <<<"${1}"
+}
+
+statMtimeRange() {
+    local json="$1"
+    local id realdir
+
+    id="$(jq -r '.id' <<<"${json}")"
+    if [ "${id}" = 'null' ]; then
+        die 'missing repo id.'
+    fi
+    if ! matchUuid "${id}"; then
+        die 'malformed repo id.'
+    fi
+
+    log "Started mtime check. [repoId ${id}]"
+
+    if ! cfgNogfsoctlJwtAuth stat --wait=1h \
+        --mtime-range-only --author="${cfgStatAuthor}" "${id}";
+    then
+        die 'Failed to run nogfsoctl stat.'
+    fi
+
+    log "Completed mtime check. [repoId ${id}]"
+}
+
+log() {
+    echo >&2 "$(date -Iseconds -u)" '[nogfsotchd3]' "$@"
+}
+
+die() {
+    printf >&2 'fatal: %s\n' "$1"
+    exit 1
+}
+
+isFunction() {
+    declare -f "$1" >/dev/null
+}
+
+main "$@"

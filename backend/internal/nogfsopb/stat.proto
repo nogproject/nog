@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+import "repo-init.proto";
+import "job-control.proto";
+
+service Stat {
+    rpc StatStatus(StatStatusI) returns (stream StatStatusO);
+    rpc Stat(StatI) returns (StatO);
+    rpc Sha(ShaI) returns (ShaO);
+    rpc RefreshContent(RefreshContentI) returns (RefreshContentO);
+    rpc ReinitSubdirTracking(ReinitSubdirTrackingI) returns (ReinitSubdirTrackingO);
+}
+
+message StatStatusI {
+    bytes repo = 1;
+}
+
+message StatStatusO {
+    repeated PathStatus paths = 1;
+}
+
+message PathStatus {
+    string path = 1;
+    enum Status {
+        PS_UNSPECIFIED = 0;
+        PS_NEW = 1;
+        PS_MODIFIED = 2;
+        PS_DELETED = 3;
+    }
+    Status status = 2;
+}
+
+message StatI {
+    bytes repo = 1;
+    string author_name = 2;
+    string author_email = 3;
+    reserved 4; // retired: bool is_blocking = 4;
+    JobControl job_control = 5;
+    enum Flag {
+        F_UNSPECIFIED = 0x00;
+        F_MTIME_RANGE_ONLY = 0x01;
+    }
+    // `flags` are `Flag` values packed with bitwise or.
+    uint32 flags = 6;
+}
+
+message StatO {
+}
+
+message ShaI {
+    bytes repo = 1;
+    string author_name = 2;
+    string author_email = 3;
+    reserved 4; // retired: bool is_blocking = 4;
+    JobControl job_control = 5;
+}
+
+message ShaO {
+}
+
+message RefreshContentI {
+    bytes repo = 1;
+    string author_name = 2;
+    string author_email = 3;
+    reserved 4; // retired: bool is_blocking = 4;
+    JobControl job_control = 5;
+}
+
+message RefreshContentO {
+}
+
+message ReinitSubdirTrackingI {
+    bytes repo = 1;
+    string author_name = 2;
+    string author_email = 3;
+    SubdirTracking subdir_tracking = 4;
+    reserved 5; // retired: bool is_blocking = 5;
+    JobControl job_control = 6;
+}
+
+message ReinitSubdirTrackingO {
+}

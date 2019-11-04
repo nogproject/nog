@@ -1,0 +1,4 @@
+/local/
+Vagrantfile
+.vagrant
+*.log

@@ -1,0 +1,20 @@
+#!/bin/bash
+set -o errexit -o nounset -o noglob -o pipefail
+
+if [ $# -ne 3 ]; then
+    echo >&2 'fatal: require three arguments.'
+    exit 1
+fi
+branch="$1"
+dir="$2"
+duration="$3"
+
+lst="$(
+    /usr/bin/git -C "${dir}" \
+        rev-list -n 1 --since="${duration} ago" "refs/heads/${branch}"
+)"
+if [ -n "${lst}" ]; then
+    exit 10 # Yes, branch is newer.
+else
+    exit 11 # No, branch is older.
+fi

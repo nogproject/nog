@@ -1,0 +1,70 @@
+{
+  "name": "nog-sync",
+  "version": "0.0.1",
+  "description": "Synchronize Nog deployments.",
+  "main": "index.coffee",
+  "scripts": {
+    "flow": "ln -sf ../../../apps/nog-app/meteor/.meteor/local/build/programs/server/packages node_modules/.flow_meteor_server_packages; flow; test $? -eq 0 -o $? -eq 2",
+    "lint": "eslint .",
+    "pretest": "npm run lint --silent",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "eslintConfig": {
+    "parser": "babel-eslint",
+    "plugins": [
+      "meteor"
+    ],
+    "extends": [
+      "airbnb",
+      "plugin:meteor/recommended"
+    ],
+    "rules": {
+      "import/no-unresolved": [
+        "error",
+        {
+          "ignore": [
+            "^meteor/"
+          ]
+        }
+      ],
+      "no-console": "off",
+      "new-cap": [
+        "error",
+        {
+          "capIsNewExceptions": [
+            "Match.Maybe",
+            "Match.ObjectIncluding"
+          ]
+        }
+      ],
+      "no-underscore-dangle": [
+        "error",
+        {
+          "allow": [
+            "_id"
+          ]
+        }
+      ],
+      "quotes": [
+        "error",
+        "single",
+        {"allowTemplateLiterals": true}
+      ]
+    }
+  },
+  "keywords": [
+    "Nog"
+  ],
+  "author": "Steffen Prohaska <prohaska@zib.de>",
+  "license": "MIT",
+  "devDependencies": {
+    "babel-eslint": "^6.0.4",
+    "eslint": "^2.13.0",
+    "eslint-config-airbnb": "^9.0.1",
+    "eslint-plugin-import": "^1.8.1",
+    "eslint-plugin-jsx-a11y": "^1.5.3",
+    "eslint-plugin-meteor": "^3.6.0",
+    "eslint-plugin-react": "^5.2.2",
+    "flow-bin": "^0.27.0"
+  }
+}

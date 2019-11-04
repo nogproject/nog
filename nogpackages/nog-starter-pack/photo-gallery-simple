@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+
+import os
+import os.path
+import numpy as np
+from skimage import io
+import nog
+
+repo_name = 'nog/example_photo-gallery_2015'
+maxWH = 300
+maxWidth = 200
+maxHeight = 200
+
+
+def main():
+    if maxWidth >= maxWH or maxHeight >= maxWH:
+        raise RuntimeError(
+            'Expected a reasonable thumbnail size.  Set `maxWidth`'
+            ' and `maxHeight` both to <= 300 and restart the program.')
+
+    workspace = nog.openRepo(repo_name)
+    master = workspace.getMaster()
+    root = master.tree
+
+    tmppath = mkTmpFolder(os.getcwd(), 'tmp')
+
+    try:
+        results = next(root.trees('results'))
+    except StopIteration:
+        results = nog.Tree()
+        results.name = 'results'
+        root.append(results)
+
+    res = nog.Tree()
+    res.name = 'photo-gallery'
+
+    try:
+        (idx, e) = next(results.enumerateEntries(res.name))
+        results.pop(idx)
+    except StopIteration:
+        idx = 0
+    results.insert(idx, res)
+
+    try:
+        datalist = next(root.trees('datalist'))
+    except StopIteration:
+        datalist = nog.Tree()
+
+    gallery = nog.Object()
+    gallery.name = 'index.md'
+    galContent = '# Photo Gallery\n\n'
+
+    blobs = []
+    for d in datalist.entries():
+        if d.type is 'object':
+            blobs.append(d.blob)
+    workspace.prefetchBlobs(blobs)
+
+    for d in datalist.entries():
+        if d.type != 'object':
+            continue
+
+        d.linkBlob(tmppath + '/' + d.name)
+
+        thumb = imageToThumbnail(tmppath + '/' + d.name, maxWidth, maxHeight)
+
+        obj = nog.Object()
+        obj.name = 'thumb_' + d.name
+        io.imsave(tmppath + '/' + obj.name, thumb)
+        obj.blob = tmppath + '/' + obj.name
+        res.append(obj)
+
+        galContent += '![' + obj.name + '](' + obj.name + ')'
+        galContent += '  '
+
+    gallery.meta['content'] = galContent
+    res.insert(0, gallery)
+
+    workspace.commitTree(
+        subject="Add result", tree=root, parent=master.sha1)
+
+    rmTmpFolder(tmppath)
+
+
+def imageToThumbnail(path, maxW, maxH):
+    img = io.imread(path)
+    (x, y, z) = img.shape
+
+    if x <= maxW and y <= maxH:
+        return img
+    else:
+        if x > y:
+            fac = x / maxW
+        else:
+            fac = y / maxH
+
+    mx = int(x / fac)
+    my = int(y / fac)
+
+    newimg = np.zeros((mx, my, z), dtype='uint8')
+    for col in range(mx):
+        for row in range(my):
+            p = img[col*fac, row*fac, :]
+            newimg[col, row, :] = p
+
+    return newimg
+
+
+def mkTmpFolder(path, dir):
+    p = path + '/' + dir
+    if not os.path.isdir(p):
+        os.mkdir(dir)
+    else:
+        list = os.listdir(p)
+        for f in list:
+            os.remove(p + '/' + f)
+    return p
+
+
+def rmTmpFolder(path):
+    list = os.listdir(path)
+    for f in list:
+        os.remove(path + '/' + f)
+    os.rmdir(os.path.basename(path))
+
+
+main()

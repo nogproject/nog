@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+
+from copy import copy, deepcopy
+from datetime import datetime
+import json
+import nog
+import os
+import random
+import string
+
+workspaceRepo = 'fake_celltracking-workspace_2015'
+
+
+def main():
+    workspace = nog.openRepo(workspaceRepo)
+    master = workspace.getMaster()
+    root = master.tree
+
+    # Get first job and find corresponding program by name and sha1.
+    job = next(next(root.trees('jobs')).entries())
+    prgName = job.meta['job']['program']['name']
+    prgSha1 = job.meta['job']['program']['sha1']
+    programs = next(root.trees('programs'))
+    pkg = None
+    for p in programs.entries():
+        if p.meta['package']['name'] == prgName:
+            pkg = p
+            break
+    print('package', pkg.sha1, stringify_pretty(pkg.content))
+    prg = None
+    for p in pkg.entries():
+        if p.sha1 == prgSha1:
+            prg = p
+            break
+    print('program', prg.sha1, stringify_pretty(prg.content))
+
+    program = link(prg)
+    print('linked', stringify_pretty(program))
+
+    for a in program['code']['archives']:
+        ar = workspace.getObject(a['sha1'])
+        print('archive', ar.sha1, stringify_pretty(ar.content))
+
+    params = copy(program['params'])
+    params['nog'] = {
+        'workspaceRepo': workspaceRepo,
+        'job': {'id': job.meta['job']['id'], 'sha1': job.sha1}
+    }
+    print('Execute:\n')
+    print("./compute --params '{0}'".format(stringify_pretty(params)))
+
+
+def link(prg):
+    program = {}
+    mergeExtend = ['dependencies', 'archives']
+
+    def merge(dst, src):
+        for k in src:
+            if k in dst:
+                if isinstance(dst[k], dict) and isinstance(src[k], dict):
+                    merge(dst[k], src[k])
+                elif (isinstance(dst[k], list) and isinstance(src[k], list) and
+                        (k in mergeExtend)):
+                    dst[k].extend(src[k])
+                else:
+                    dst[k] = src[k]
+            else:
+                dst[k] = src[k]
+
+    def add(e):
+        try:
+            p = e.meta['program']
+        except KeyError:
+            return
+        merge(program, p)
+
+    def walk(tree):
+        for e in tree.entries():
+            if e.type == 'object':
+                add(e)
+            elif e.type == 'tree':
+                walk(e)
+            else:
+                raise RuntimeError('Unknown entry type.')
+        add(tree)
+
+    walk(prg)
+    return program
+
+
+def stringify_pretty(d):
+    return json.dumps(d, sort_keys=True, ensure_ascii=False, indent=2) + '\n'
+
+
+main()

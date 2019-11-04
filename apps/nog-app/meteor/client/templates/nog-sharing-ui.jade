@@ -1,0 +1,119 @@
+template(name='repoSharing')
+  if optNogSharing
+    if isOwnRepo
+      hr
+      +repoSharingContent
+      hr
+
+
+template(name='repoSharingContent')
+  .row
+    .col-sm-12
+      | Share repository:
+      form.form-inline
+        label.checkbox-inline
+          input.js-toggle-public(type='checkbox' checked=isPublic)
+          | public
+        label.checkbox-inline
+          input.js-toggle-all-circles(type='checkbox' checked=isAllCircles)
+          | all circles
+        label
+        each circles
+          +repoSharingCircle
+        label
+        .dropdown.nog-sharing-dropdown
+          button.btn.btn-default.dropdown-toggle(
+                data-toggle='dropdown'
+              ) Add Circle
+            span.caret
+          ul.dropdown-menu
+            each ownerCircles
+              li
+                a.js-add-circle(tabindex='-1' href='#') #{name}
+        label
+        a(href='/settings') Manage circles
+
+
+template(name='repoSharingCircle')
+  .btn-group.btn-group-xs
+    button.btn.btn-primary.js-no-action #{name}
+    if isDeleting
+      button.btn.btn-primary.js-delete-cancel Cancel
+      button.btn.btn-danger.js-delete-confirm
+        span.glyphicon.glyphicon-remove-circle
+    else
+      button.btn.btn-primary.js-delete-start
+        span.glyphicon.glyphicon-remove-circle
+
+
+template(name='manageCircles')
+  if optNogSharing
+    +manageCirclesContent
+
+
+template(name='manageCirclesContent')
+  .row
+    .col-sm-12
+      span.help-block.
+        Searching users is not yet supported.  You need to know their names.
+  if Template.subscriptionsReady
+    +circlesList
+    .row
+      .col-sm-3
+        .form-group
+          label Create New Circle
+          .input-group
+            input.form-control.js-create-circle-text(
+                type='text' placeholder='Circle Name')
+            .input-group-btn
+              button.btn.btn-default.js-create-circle(type='button') Create
+  else
+    .row
+      .col-sm-12
+        p Loading...
+
+
+template(name='circlesList')
+  each circles
+    +circlesListItem
+    hr
+
+
+template(name='circlesListItem')
+  .row
+    .col-sm-3
+      p
+        .btn-group
+          button.btn.btn-primary.js-no-action #{name}
+          if isDeleting
+            button.btn.btn-primary.js-delete-circle-cancel Cancel
+            button.btn.btn-danger.js-delete-circle-confirm
+              span.glyphicon.glyphicon-remove-circle
+          else
+            button.btn.btn-primary.js-delete-circle-start
+              span.glyphicon.glyphicon-remove-circle
+      .form-group
+        label Add Member
+        .input-group
+          input.form-control.js-add-member-text(
+              type='text' placeholder='Username')
+          .input-group-btn
+            button.btn.btn-default.js-add-member(type='button') Add
+    .col-sm-9
+      p
+        each members
+          +circleMembersItem
+
+
+template(name='circleMembersItem')
+  .btn-group.btn-group-xs
+    button.btn.btn-info.js-no-action
+      span.glyphicon.glyphicon-user
+      | #{toName}
+    if isDeleting
+      button.btn.btn-info.js-delete-member-cancel Cancel
+      button.btn.btn-danger.js-delete-member-confirm
+        span.glyphicon.glyphicon-remove
+    else
+      button.btn.btn-info.js-delete-member-start
+        span.glyphicon.glyphicon-remove

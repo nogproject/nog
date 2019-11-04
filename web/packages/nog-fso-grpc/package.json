@@ -1,0 +1,20 @@
+{
+  "name": "nog-fso-grpc",
+  "version": "0.0.0",
+  "description": "FSO gRPC stubs",
+  "main": "index-server.js",
+  "scripts": {
+    "lint": "\"$(git rev-parse --show-toplevel)\"/node_modules/.bin/eslint .",
+    "lint-fix": "meteor npm run lint -- --fix",
+    "test": "npm run test-headless",
+    "test-watch": "echo >&2 'nog-fso-grpc has no unit tests.' && exit 0 && cd \"$(git rev-parse --show-toplevel)\"/web/apps/packages-testapp && npm run test-packages-watch-nog-fso-grpc",
+    "test-headless": "echo >&2 'nog-fso-grpc has no unit tests.' && exit 0 && cd \"$(git rev-parse --show-toplevel)\"/web/apps/packages-testapp && npm run test-packages-headless-nog-fso-grpc"
+  },
+  "keywords": [
+    "Nog"
+  ],
+  "author": "Steffen Prohaska <prohaska@zib.de>",
+  "license": "MIT",
+  "//": "See toplevel package.json for ESLint dependencies",
+  "devDependencies": { }
+}

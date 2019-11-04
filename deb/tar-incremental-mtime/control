@@ -1,0 +1,7 @@
+Package: tar-incremental-mtime
+Version: {{ version }}
+Section: utils
+Priority: standard
+Architecture: amd64
+Maintainer: Steffen Prohaska <prohaska@zib.de>
+Description: GNU tar with option --listed-incremental-mtime

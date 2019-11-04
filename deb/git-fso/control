@@ -1,0 +1,8 @@
+Package: git-fso
+Version: {{ version }}
+Depends: bash, bc, gawk, git, jq
+Section: vcs
+Priority: standard
+Architecture: amd64
+Maintainer: Steffen Prohaska <prohaska@zib.de>
+Description: Git File System Observer

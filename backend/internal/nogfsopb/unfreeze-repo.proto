@@ -1,0 +1,204 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+import "job-control.proto";
+// import "status.proto"; // implicit use of enum StatusCode.
+
+service UnfreezeRepo {
+    rpc BeginUnfreezeRepo(BeginUnfreezeRepoI) returns (BeginUnfreezeRepoO);
+    rpc CommitUnfreezeRepo(CommitUnfreezeRepoI) returns (CommitUnfreezeRepoO);
+    rpc AbortUnfreezeRepo(AbortUnfreezeRepoI) returns (AbortUnfreezeRepoO);
+    rpc GetUnfreezeRepo(GetUnfreezeRepoI) returns (GetUnfreezeRepoO);
+
+    rpc BeginUnfreezeRepoFiles(BeginUnfreezeRepoFilesI) returns (BeginUnfreezeRepoFilesO);
+    rpc CommitUnfreezeRepoFiles(CommitUnfreezeRepoFilesI) returns (CommitUnfreezeRepoFilesO);
+    rpc AbortUnfreezeRepoFiles(AbortUnfreezeRepoFilesI) returns (AbortUnfreezeRepoFilesO);
+}
+
+service RegistryUnfreezeRepo {
+    rpc RegistryBeginUnfreezeRepo(RegistryBeginUnfreezeRepoI) returns (RegistryBeginUnfreezeRepoO);
+    rpc RegistryCommitUnfreezeRepo(RegistryCommitUnfreezeRepoI) returns (RegistryCommitUnfreezeRepoO);
+    rpc RegistryAbortUnfreezeRepo(RegistryAbortUnfreezeRepoI) returns (RegistryAbortUnfreezeRepoO);
+}
+
+service ReposUnfreezeRepo {
+    rpc ReposBeginUnfreezeRepo(ReposBeginUnfreezeRepoI) returns (ReposBeginUnfreezeRepoO);
+    rpc ReposCommitUnfreezeRepo(ReposCommitUnfreezeRepoI) returns (ReposCommitUnfreezeRepoO);
+    rpc ReposAbortUnfreezeRepo(ReposAbortUnfreezeRepoI) returns (ReposAbortUnfreezeRepoO);
+}
+
+message BeginUnfreezeRepoI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    bytes repo = 4;
+    bytes repo_vid = 5;
+    bytes workflow = 6;
+    string author_name = 7;
+    string author_email = 8;
+}
+
+message BeginUnfreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+    bytes repo_vid = 3;
+    bytes workflow_index_vid = 4;
+    bytes workflow_vid = 5;
+}
+
+message BeginUnfreezeRepoFilesI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message BeginUnfreezeRepoFilesO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message CommitUnfreezeRepoFilesI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message CommitUnfreezeRepoFilesO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message AbortUnfreezeRepoFilesI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    int32 status_code = 4; // StatusCode unfreeze-repo code.
+    string status_message = 5;
+}
+
+message AbortUnfreezeRepoFilesO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+}
+
+message CommitUnfreezeRepoI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+}
+
+message CommitUnfreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+    bytes workflow_index_vid = 3;
+}
+
+message AbortUnfreezeRepoI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    bytes workflow_vid = 3;
+    int32 status_code = 4; // StatusCode unfreeze-repo code.
+    string status_message = 5;
+}
+
+message AbortUnfreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+    bytes workflow_index_vid = 3;
+}
+
+message GetUnfreezeRepoI {
+    reserved 1; // Potential future header.
+    bytes workflow = 2;
+    JobControl job_control = 3;
+}
+
+message GetUnfreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes workflow_vid = 2;
+    string registry = 3;
+    bytes repoId = 4;
+    int32 status_code = 5; // StatusCode common code or unfreeze-repo code.
+    string status_message = 6;
+}
+
+message RegistryBeginUnfreezeRepoI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    bytes repo = 4;
+    bytes workflow = 5;
+}
+
+message RegistryBeginUnfreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message RegistryCommitUnfreezeRepoI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    bytes repo = 4;
+    bytes workflow = 5;
+}
+
+message RegistryCommitUnfreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message RegistryAbortUnfreezeRepoI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    bytes repo = 4;
+    bytes workflow = 5;
+    int32 status_code = 6; // StatusCode unfreeze-repo code.
+}
+
+message RegistryAbortUnfreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message ReposBeginUnfreezeRepoI {
+    reserved 1; // Potential future header.
+    bytes repo = 2;
+    bytes repo_vid = 3;
+    bytes workflow = 4;
+}
+
+message ReposBeginUnfreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes repo_vid = 2;
+}
+
+message ReposCommitUnfreezeRepoI {
+    reserved 1; // Potential future header.
+    bytes repo = 2;
+    bytes repo_vid = 3;
+    bytes workflow = 4;
+}
+
+message ReposCommitUnfreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes repo_vid = 2;
+}
+
+message ReposAbortUnfreezeRepoI {
+    reserved 1; // Potential future header.
+    bytes repo = 2;
+    bytes repo_vid = 3;
+    bytes workflow = 4;
+    int32 status_code = 5; // StatusCode unfreeze-repo code.
+    string status_message = 6;
+}
+
+message ReposAbortUnfreezeRepoO {
+    reserved 1; // Potential future header.
+    bytes repo_vid = 2;
+}
+

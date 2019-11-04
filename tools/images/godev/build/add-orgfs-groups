@@ -1,0 +1,113 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+# Based on `fuimages_bcpfs_2017/bcpfs/tools/images/bcpfsfake/build`.
+#
+# Create a few fake groups:
+#
+#   - research labs.
+#   - collaborative research projects.
+#   - facilities.
+#   - Nog.
+#   - microscopes.
+#   - analysis service.
+
+groupAgSuper='ag_org'
+
+orgUnits='
+ag-alice
+ag-bob
+ag-charly
+ag-fake
+sfb-9999
+nog
+em-facility
+ms-facility
+fake-facility
+lm-facility
+'
+
+services='
+spim-100
+spim-222
+tem-505
+rem-707
+em-analysis
+ms-data
+fake-analysis
+fake-tem
+'
+
+facilities='
+em
+lm
+ms
+fake
+'
+
+# Lines: <user> <orgUnit> <services>...
+users='
+alice  ag-alice  rem-707 tem-505
+bob    ag-bob    rem-707 tem-505
+charly ag-charly rem-707 tem-505
+'
+
+groupsSrv='
+ngfsta
+ngftar
+ngfbak
+ngftch
+'
+
+# Lines: <user> <primary-group> <secondary-groups>...
+usersSrv='
+ngfsta2 ngfsta
+ngfsta3 ngfsta
+ngftar ngftar
+ngfrst ngfsta ngftar
+ngfbak ngfbak
+ngftch ngftch
+'
+
+addgroup "${groupAgSuper}"
+
+for ou in ${orgUnits}; do
+    addgroup "org_${ou}"
+    adduser --system --shell /bin/bash --ingroup "org_${ou}" "${ou}-member"
+    adduser --system --shell /bin/bash --ingroup "org_${ou}" "${ou}-member2"
+    usermod -aG "${groupAgSuper}" "${ou}-member"
+    usermod -aG "${groupAgSuper}" "${ou}-member2"
+done
+
+for d in ${services}; do
+    addgroup "srv_${d}"
+done
+
+for f in ${facilities}; do
+    addgroup "srv_${f}-ops"
+done
+
+grep -v '^ *$' <<<"${users}" | while read -r user ou srvs; do
+    adduser --system --shell /bin/bash --ingroup "org_${ou}" "${user}"
+    usermod -aG "${groupAgSuper}" "${user}"
+    for s in ${srvs}; do
+        usermod -aG "srv_${s}" "${user}"
+        echo "Added user \`${user}\` to service \`${s}\`."
+    done
+done
+
+for group in ${groupsSrv}; do
+    addgroup "${group}"
+done
+
+grep -v '^ *$' <<<"${usersSrv}" | while read -r user grp1 grps2; do
+    adduser --system --shell /bin/bash --ingroup "${grp1}" "${user}"
+    if [ -z "${grps2}" ]; then
+        continue
+    fi
+    for g in ${grps2}; do
+        usermod -aG "${g}" "${user}"
+        echo "Added user \`${user}\` to group \`${g}\`."
+    done
+done

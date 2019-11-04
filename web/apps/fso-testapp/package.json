@@ -1,0 +1,45 @@
+{
+  "name": "fso-testapp",
+  "private": true,
+  "scripts": {
+    "start": "meteor run --settings _private/settings.json",
+    "lint": "\"$(git rev-parse --show-toplevel)\"/node_modules/.bin/eslint --ext .js --ext .jsx .",
+    "lint-fix": "npm run lint -- --fix",
+    "settings": "\"$(git rev-parse --show-toplevel)\"/tools/bin/readlink -f _private/settings.json",
+    "test": "npm-run-all test-headless test-full-app-headless",
+    "test-watch": "TEST_WATCH=1 meteor test --driver-package meteortesting:mocha",
+    "test-headless": "TEST_BROWSER_DRIVER=chrome meteor test --once --driver-package meteortesting:mocha",
+    "test-full-app-watch": "TEST_WATCH=1 meteor test --full-app --driver-package meteortesting:mocha --settings _private/settings.json",
+    "test-full-app-headless": "TEST_BROWSER_DRIVER=chrome meteor test --full-app --once --driver-package meteortesting:mocha --settings _private/settings.json",
+    "visualize": "meteor --production --extra-packages bundle-visualizer --settings _private/settings.json"
+  },
+  "dependencies": {
+    "@babel/runtime": "^7.1.5",
+    "bcrypt": "^3.0.5",
+    "body-parser": "^1.18.3",
+    "connect": "^3.6.6",
+    "grpc": "^1.19.0",
+    "jsonwebtoken": "^8.5.1",
+    "meteor-node-stubs": "^0.4.1",
+    "node-forge": "^0.8.2",
+    "path-to-regexp": "^3.0.0",
+    "protobufjs": "^6.8.8",
+    "underscore": "^1.9.1"
+  },
+  "meteor": {
+    "mainModule": {
+      "client": "client/main.js",
+      "server": "server/main.js"
+    },
+    "testModule": {
+      "client": "tests/client-tests.js",
+      "server": "tests/server-tests.js"
+    }
+  },
+  "devDependencies": {
+    "chai": "^4.2.0",
+    "chromedriver": "^2.46.0",
+    "npm-run-all": "^4.1.5",
+    "selenium-webdriver": "^3.6.0"
+  }
+}

@@ -1,0 +1,14 @@
+# Use `../../tools/bin/gen-settings` to create `settings.json`.
+---
+{
+    "public": {
+        "tests": {
+            "passwords": {
+                "user": "{{ password }}"
+            }
+        }
+    }
+}
+---
+id: password
+q: 'Password that will be used for the a local testing user:'

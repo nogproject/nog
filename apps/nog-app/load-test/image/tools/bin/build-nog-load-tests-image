@@ -1,0 +1,45 @@
+#!/bin/bash
+
+set -o errexit -o nounset -o pipefail -o noglob
+
+xtar() {
+    gtar "$@"
+}
+
+main() {
+    : ${stage:=dev$(git config user.initials)}
+
+    egrep -q '^[a-z]+$' <<<"${stage}" || {
+        printf >&2 'Error: Invalid stage: `%s`.\n' "${stage}"
+        exit 1
+    }
+
+    version=$(git show --abbrev=10 -s --pretty=%cd-g%h --date=format:%FT%H%M%S)
+    image=localhost:5555/${stage}/nog-load-test:${version}
+
+    pwd | grep -q 'load-test/image$' || {
+        echo >&2 "Error: Wrong directory."
+        exit 1
+    }
+
+    echo '    CP src'
+    mkdir src
+    (
+        cd .. &&
+        git ls-files | xtar --dereference --files-from=- -cf -
+    ) |
+    xtar -C src -xvf -
+
+    echo '    BUILD image'
+    docker build -t "${image}" "$@" .
+    docker push ${image}
+
+    echo '    CLEAN'
+    rm -rf src
+
+    echo '    DONE'
+    echo
+    echo "image: ${image}"
+}
+
+main "$@"

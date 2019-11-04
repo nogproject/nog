@@ -1,0 +1,13 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+if ! [ -d '/go' ]; then
+    echo >&2 'fatal: must be run in the godev container.'
+    exit 1
+fi
+
+rootdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd ../.. && pwd)"
+
+# The Go file must be below `backend/` to use `backend/vendor/`.
+exec go run "${rootdir}/backend/tools/lib/gen-devjwts.go" "$@"

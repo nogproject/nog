@@ -1,0 +1,114 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+import "gitnog.proto";
+import "git-details.proto";
+
+service GitNogTree {
+    rpc ListStatTree(ListStatTreeI) returns (stream ListStatTreeO);
+    rpc ListMetaTree(ListMetaTreeI) returns (stream ListMetaTreeO);
+    // `GitNogTree.PutPathMetadata()` and `GitNog.PutMeta()` should return the
+    // same information.  The return proto message field IDs need not be
+    // identical, though.
+    rpc PutPathMetadata(PutPathMetadataI) returns (PutPathMetadataO);
+}
+
+message ListStatTreeI {
+    bytes repo = 1;
+    bytes stat_git_commit = 2;
+    string prefix = 3;
+}
+
+message ListStatTreeO {
+    repeated PathInfo paths = 1;
+}
+
+message PathInfo {
+    // `path` is relative to the repo root.  Dot `.` is the root directory.
+    // Directories have no trailing slash.
+    string path = 1;
+
+    // `mtime` in UNIX seconds.
+    int64 mtime = 2;
+
+    // `size` is the file size.  It is 0 for ordinary directories and
+    // non-regular files.  It is the sum of the sizes of the regular files
+    // below a directory that is a nogbundle or a submodule, adding the size
+    // for every unique inode only once; except for legacy submodules, where
+    // the size is 0.
+    int64 size = 3;
+
+    // `dirs`, `files`, `links`, `others` contain the counts for the respective
+    // type in nogbundles, submodules, and the root directory `.`; except for
+    // legacy submodules and root directories, where all counts are 0.
+    //
+    // A nogbundle has mode `S_IFDIR` and at least `dirs` > 0; the nogbundle
+    // directory itself is counted in `dirs`.  The root directory `.` is
+    // special: it has the nogbundle counts, unless it is a legacy root, but it
+    // may also have children.
+    int64 dirs = 7;
+    int64 files = 8;
+    int64 links = 9;
+    int64 others = 10;
+
+    // `mode` uses a subset of Linux/Git file modes.  See Kernel
+    // `uapi/linux/stat.h` and Git `cache.h`,
+    // <https://github.com/torvalds/linux/blob/master/include/uapi/linux/stat.h>
+    // <https://github.com/git/git/blob/master/cache.h>.
+    //
+    // Specifically, the following types:
+    //
+    // ```
+    // S_IFMT       0170000  // type mask
+    // S_IFDIR      0040000  // dir, maybe nogbundle; see `dirs`, ... .
+    // S_IFREG      0100000  // regular file
+    // S_IFLNK      0120000  // symlink
+    // S_IFGITLINK  0160000  // gitlink, aka submodule commit
+    // ```
+    //
+    // File perms may be omitted.  In order to allow for future extension,
+    // clients should nontheless perform the masking operation to extract the
+    // type, for example test for symlink with `m & S_IFMT == S_IFLNK`.
+    uint32 mode = 4;
+
+    // `symlink` is the symlink target.  Empty if not a symlink.
+    string symlink = 5;
+
+    // `gitlink` is the gitlink target commit.  Empty if not a gitlink.
+    bytes gitlink = 6;
+}
+
+message ListMetaTreeI {
+    bytes repo = 1;
+    bytes meta_git_commit = 2;
+}
+
+message ListMetaTreeO {
+    repeated PathMetadata paths = 1;
+}
+
+message PathMetadata {
+    string path = 1;
+    bytes metadata_json = 2;
+}
+
+message PutPathMetadataI {
+    bytes repo = 1;
+    bytes old_git_nog_commit = 2;
+    bytes old_meta_git_commit = 3;
+    string author_name = 4;
+    string author_email = 5;
+    string commit_message = 6;
+    repeated PathMetadata path_metadata = 7;
+}
+
+message PutPathMetadataO {
+    bytes repo = 1;
+    bytes git_nog_commit = 2;
+    HeadGitCommits git_commits = 3;
+    WhoDate meta_author = 5;
+    WhoDate meta_committer = 6;
+    bool is_new_commit = 4;
+}

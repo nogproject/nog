@@ -1,0 +1,57 @@
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+
+# This script may be called as described in "Debian Policy Manual" subsection
+# "Summary of ways maintainer scripts are called",
+# <https://www.debian.org/doc/debian-policy/ch-maintainerscripts.html#summary-of-ways-maintainer-scripts-are-called>.
+
+case "$1" in
+configure)
+    # Debconf uses unset variables.
+    set +o nounset
+    source /usr/share/debconf/confmodule
+
+    db_input medium nogfsosdwbakd3/nogfsostad_user || true
+    db_go
+    db_get nogfsosdwbakd3/nogfsostad_user
+    stad="${RET}"
+
+    db_input medium nogfsosdwbakd3/nogfsosdwbakd3_user || true
+    db_go
+    db_get nogfsosdwbakd3/nogfsosdwbakd3_user
+    bakd="${RET}"
+    set -o nounset
+
+    # Add unprivileged daemon users and groups.
+    adduser --quiet \
+        --system --group \
+        --home /nonexistent --no-create-home \
+        "${stad}" || true
+
+    adduser --quiet \
+        --system --group \
+        --home /nonexistent --no-create-home \
+        "${bakd}" || true
+
+    if ! [ -e '/etc/sudoers.d/nogfsotard' ]; then
+        install -m 0440 <<EOF /dev/stdin /etc/sudoers.d/nogfsosdwbakd3
+# Uncomment the lines below to use nogfsosdwbakd3 with sudo.
+# Allow nogfsosdwbakd3 cfgPrivGitForEachRef='sudo'.
+#${bakd} ALL=(root) NOPASSWD: /usr/lib/nogfsosdwbakd3/stat-dir-owner /*
+#${bakd} ALL=(${stad}) NOPASSWD: /usr/lib/nogfsosdwbakd3/git-for-each-ref-dir /*
+EOF
+        echo 'nogfsosdwbakd3: `visudo -f /etc/sudoers.d/nogfsosdwbakd3` to allow privileged nogfsosdwbakd3 operations.'
+    fi
+
+    install -m 0750 -g "${bakd}" /bin/tar /usr/lib/nogfsosdwbakd3/tar
+    setcap cap_dac_read_search=ep /usr/lib/nogfsosdwbakd3/tar
+;;
+
+abort-upgrade|abort-remove|abort-deconfigure)
+;;
+
+*)
+    echo >&2 "fatal: postinst called with unknown argument '$1'."
+    exit 1
+;;
+esac

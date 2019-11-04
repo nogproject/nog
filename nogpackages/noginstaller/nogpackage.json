@@ -1,0 +1,28 @@
+{
+  "package": {
+    "authors": [
+      {
+        "email": "prohaska@zib.de",
+        "name": "Steffen Prohaska"
+      }
+    ],
+    "content": {
+      "files": [
+        "_nogpm",
+        "install-nog",
+        "nog.py",
+        "nogresolve.py"
+      ]
+    },
+    "description": "Installer for a basic nog dev environment",
+    "frozen": [],
+    "name": "noginstaller",
+    "readme": "README.md",
+    "version": {
+      "major": 0,
+      "minor": 0,
+      "patch": 15
+    }
+  },
+  "programRegistry": "nog/packages"
+}

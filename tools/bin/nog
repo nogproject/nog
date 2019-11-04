@@ -1,0 +1,1689 @@
+#!/usr/bin/env python3
+
+"""nog command line client.
+
+Usage:
+  nog init [--create] [-f] <repo>
+  nog pull [-v|-vv] [-f] [--allow-empty]
+  nog add (--blob|--content|--meta) [--] <file>...
+  nog add [-u|--update]
+  nog checkout [--] <file>...
+  nog push [-v|-vv] [--allow-empty|--empty] [-f|-ff]
+  nog status [--remote] [-n <limit>] [-v] [-a|--all]
+  nog ls-files [--] [<file>...]
+
+Options:
+  -h --help     Print help.
+  --version     Print version information.
+  -v --verbose  Enable verbose output (multiple v increase verbosity).
+
+  -f --force    Force some operations (multiple f increase force).
+
+  --create      Create remote repo.
+
+  --blob        Add content for S3 blob storage.
+  --content     Add content as `meta.content`.
+  --meta        Add only content sha1.
+  -u --update   Update existing meta files using the previous mode.
+
+  --allow-empty     Allow operations that would otherwise fail without changes.
+                Push will continue if the tree is unmodified.  Pull will create
+                a new git commit even if the diff is empty.
+
+  --empty       Push only if the tree is unmodified.  This may be useful to
+                establish a new synchronization point: `pull -f` to get changes
+                without common git commit; check the changes; `push --empty` to
+                record the git commit in a new nog commit, but only if nog has
+                not been modified in the meantime.  `--empty` implies `-f` if
+                necessary.
+
+  --remote      Include information about the remote status.
+  -a --all      Include all available information during status.
+  -n <limit>    Limit nog history (default: 10).
+
+# Commands
+
+`nog init` initializes the git workspace to be used with a specific nog repo.
+`<repo>` is specified as `<ownerName>/<repoName>` and expected to be available
+at `NOG_API_URL`.
+
+`nog pull` fetches the latest nog commit and commits it to git.
+
+`nog add` updates the nog meta file and runs `git add` for the meta file; it
+does not run `git add` on the file itself.  `nog add` may be run multiple
+times, before using `git commit`.  `nog add` provides several options how to
+handle the file content.  With `--blob`, the file content is scheduled for S3
+storage, which is usually the right choice for binary data.  With `--content`,
+the file content is stored in `meta.content`, which enables Nog to use the
+content in fulltext search and render Markdown files.  With `--meta`, the file
+content will be ignored and only a sha1 stored in meta, which may be useful for
+administrative git files.
+
+`nog add --update` updated meta files from the content files if present.
+
+`nog checkout` updates the content of a file based on the information in the
+meta file.  If downloads the content from S3 blob storage if necessary.
+
+`nog push` creates a nog commit for the git HEAD.  `nog push` will also create
+a new git commit with updated meta files if necessary.
+
+`nog status` displays information about the state of the working tree.
+Relevant files are listed with a prefix that indicates the state:
+
+ - 'M' indicates that the content is modified compared to the state recorded in
+   the meta file.
+ - '?' indicates that the file is not tracked by nog and not ignored by
+   `.nogignore` (which works in the same way as `.gitignore`).
+
+`nog ls-files` lists the files known to nog.  The first letter in the prefix
+indicates how content is tracked: 'b' blob, 'c' content, 'm' only meta.  The
+second letter indicates whether the content is checked-out: 'x' yes, '_' no.
+
+# Tracking Corresponding Commits
+
+`nog` uses a heuristic to track correspondence between git and nog commits in
+order to determine whether one can be fast-forwarded to the other.
+`meta.gitCommitIds` in nog commits contains a list of corresponding git
+commits.  A line in the git commit message with format `Nog-Commit-Id: <sha1>`
+indicates the corresponding nog commit.
+
+It can be useful to manually maintain the `Nog-Commit-Id` to help nog.
+Specifically, when using nog to maintain a git clone without pushing back, `nog
+pull` may be followed by `nog checkout` and `git commit` to sync the nog
+content to git.  In this case, the new git commit corresponds to the same nog
+commit that has been created by `nog pull`.  To tell nog about it, the same
+`Nog-Commit-Id` should be included in the new commit message.
+
+# Environment
+
+The evironment variables `NOG_KEYID`, and `NOG_SECRETKEY` must contain access
+credentials.  `NOG_API_URL` can be set to configure the URL of the Nog
+application API (default `http://localhost:3000/api`).  If `NOG_USERNAME` is
+set, `nog init` will use it to complete short repo names.
+
+# Usage scenarios
+
+`nog` can be used with a nog repo that is the primary data store.  Git is only
+used to temporarily manage changes that are soon pushed back to the nog repo.
+The git history is not shared.  The local git history may only track the
+metadata, or it may also track some content, like Markdown files.  Example
+setup:
+
+    mkdir local
+    cd local
+    git init
+    echo '*' >>.gitignore
+    echo '!.git*' >>.gitignore
+    echo '!.nog*' >>.gitignore
+    echo '!*.md' >>.gitignore
+    echo '.git*' >>.nogignore
+    echo '.nog*' >>.nogignore
+    git add -- .gitignore .nogignore
+    git commit -m 'Init: tracking only nog metadata'
+    # git status and nog status are both clean.
+
+    nog init <username>/<repo>
+    # nog status -a shows that we need pull force.
+    nog pull -f
+    # The new git commit contains the nog metadata.
+
+    # work, for example: nog checkout, nog add -u, git status, git commit, ...
+
+    nog status -a  # Should report that push can fast-forward.
+    nog push
+
+`nog` can be used to keep a git and a nog repo in sync.  The git history is
+shared.  Content can be tracked directly with git or with git silo.  A working
+tree is created by cloning the central git repo.  Example:
+
+    git clone <git-repo>
+    cd <git-repo>
+    nog init <nog-repo>
+    nog pull  # should be already up-to-date.
+    nog checkout -- ...
+    # ... work ...
+    nog push
+    git push
+
+In this scenario, `nog pull` can be used to sync changes that are originally
+created in the nog repo.
+
+# Getting started
+
+The following example illustrates the first steps to create a nog repo and push
+some content:
+
+    mkdir testrepo
+    cd testrepo
+    git init
+    touch .gitignore
+    git add .gitignore
+    git commit -m init
+    echo '# Hello World' >text.md
+    echo >>text.md
+    echo '![images](./image.png)' >>text.md
+    cp /from/somewhere/foo.png image.png
+    git add .
+    git commit -m 'some content'
+
+    nog init --create testrepo
+    nog add --content text.md
+    nog add --blob image.png
+    git status
+    git commit -m 'nog: Sync from git content'
+    nog push
+
+"""
+
+
+from binascii import hexlify
+from concurrent.futures import ThreadPoolExecutor
+from copy import copy
+from datetime import datetime, timezone
+from docopt import docopt
+from random import getrandbits
+from requests.adapters import HTTPAdapter
+from subprocess import check_output, call, check_call, DEVNULL
+from textwrap import dedent
+from time import time
+from urllib.parse import urlparse
+import hashlib
+import hmac
+import json
+import os
+import os.path
+import re
+import requests
+import subprocess
+import sys
+
+# Use a connect timeout slightly larger than 3 as recommended in
+# <http://www.python-requests.org/en/latest/user/advanced/#timeouts>.
+#
+# Retry a few times by default to hide the connection problems that we have
+# observed with modulus.
+#
+# A short timeout with a few retries seems to work robustly in practice for
+# syncing repos to vsl4.
+requestTimeout = (3.1, 27)
+max_retries = int(os.environ.get('NOG_MAX_RETRIES', 5))
+
+session = requests.Session()
+session.mount(
+        os.environ.get('NOG_API_URL', 'http://localhost:3000/api'),
+        HTTPAdapter(max_retries=max_retries)
+    )
+
+API_URL = os.environ.get('NOG_API_URL', 'http://localhost:3000/api') + '/v1'
+contentTypeJSON = {'Content-Type': 'application/json'}
+verbosity = 0
+
+# The storage options.
+S_BLOB = 'blob'
+S_CONTENT = 'content'
+S_META = 'meta'
+
+NULL_SHA1 = '0000000000000000000000000000000000000000'
+
+# Number of parallel uploads to S3.
+S3_NPARALLEL = 32
+
+
+def setVerbosity(v):
+    global verbosity
+    verbosity = v
+
+
+def printmsg(level, msg):
+    if level <= verbosity:
+        print(msg)
+
+
+def warn(msg):
+    sys.stderr.write('Warning: ')
+    sys.stderr.write(msg)
+    sys.stderr.write('\n')
+
+
+def main():
+    args = docopt(__doc__, version='nog 0.0.1')
+    setVerbosity(args['--verbose'])
+    cmds = {
+            'init': cmdInit,
+            'pull': cmdPull,
+            'push': cmdPush,
+            'add': cmdAdd,
+            'checkout': cmdCheckout,
+            'status': cmdStatus,
+            'ls-files': cmdLsFiles
+        }
+    for name, cmd in cmds.items():
+        if args[name]:
+            return cmd(args)
+    die('Command not implemented.')
+
+
+def cmdInit(args):
+    repoFullName = args['<repo>']
+    if '/' not in repoFullName:
+        repoFullName = os.environ.get('NOG_USERNAME') + '/' + repoFullName
+    opt_create = args['--create']
+    opt_force = args['--force']
+
+    checkGitToplevel()
+    checkClean()
+    nd = nogDir()
+    if os.path.exists(nd):
+        if opt_force:
+            printmsg(0, 'Forced init.')
+        else:
+            try:
+                name = nogGet('remote.repoFullName')
+            except:
+                name = None
+            if name:
+                die("Already initialized to remote '{0}'; "
+                    "use -f to change it.".format(name))
+            else:
+                die("'{0}' already exists; use -f to force init.".format(nd))
+    else:
+        os.mkdir(nd)
+
+    remote = RemoteRepo(repoFullName)
+    if opt_create:
+        try:
+            remote.postRepo()
+        except Exception as err:
+            die("Failed to create remote repo.  " + str(err))
+
+    try:
+        commitId = remote.getMaster()
+        printmsg(0, "Remote '{0}' is at nog commit '{1}'.".format(
+                        repoFullName, commitId))
+    except Exception as err:
+        die("Failed to get remote nog commit; use --create to create it.  "
+            "Remote error: " + str(err))
+
+    nogSet('remote', {'repoFullName': repoFullName})
+
+
+def nogGet(key):
+    key, field = _parseNogKey(key)
+    with open(nogDir() + '/' + key + '.json', 'r') as fp:
+        d = json.load(fp)
+    if field:
+        return d[field]
+    return d
+
+
+def nogSet(key, val):
+    key, field = _parseNogKey(key)
+    if field:
+        d = nogGet(key)
+        d[field] = val
+    else:
+        d = val
+    with open(nogDir() + '/' + key + '.json', 'w') as fp:
+        fp.write(stringify_pretty(d))
+
+
+def _parseNogKey(key):
+    tok = key.split('.')
+    if len(tok) > 2:
+        raise RuntimeError(
+                'Invalid key; expected format `key[.field]`; got `{0}`.'
+                .format(key)
+            )
+    if len(tok) < 2:
+        tok.append(None)
+    return tok
+
+
+def canFFGitToNog(git, nog, remote):
+    newNog = []
+    gitNogId = gitShowNogCommitId(git)
+    while True:
+        newNog.append(nog)
+        if ((gitNogId and gitNogId == nog['_id']) or
+                (git in nog['meta'].get('gitCommitIds', []))):
+            return newNog
+        parents = nog['parents']
+        if len(parents) == 0:
+            return None
+        nog = remote.getCommit(parents[0])
+
+
+def isGitCorrespondingNog(git, nog):
+    if git in nog['meta'].get('gitCommitIds', []):
+        return True
+    gitNogId = gitShowNogCommitId(git)
+    if gitNogId and gitNogId == nog['_id']:
+        return True
+    return False
+
+
+def cmdPull(args):
+    opt_force = args['--force']
+    opt_allow_empty = args['--allow-empty']
+
+    checkGitToplevel()
+    checkClean()
+
+    repoFullName = nogGet('remote.repoFullName')
+
+    remote = RemoteRepo(repoFullName)
+    commitId = remote.getMaster()
+    commit = remote.getCommit(commitId)
+
+    gitHead = gitRevParse('HEAD')
+    if isGitCorrespondingNog(gitHead, commit):
+        printmsg(0, 'Already up-to-date.')
+        exit(0)
+
+    isForced = False
+    if not canFFGitToNog(gitHead, commit, remote):
+        if opt_force >= 1:
+            isForced = True
+            printmsg(0, 'Forced pull.')
+        else:
+            gitCommitIds = commit['meta'].get('gitCommitIds', [])
+            msg = ('Cannot fast-forward git HEAD to nog commit {0}; '
+                   'gitCommitIds {1}.  '
+                   'Use -f to force pull.')
+            die(msg.format(commitId, gitCommitIds))
+
+    printmsg(1, 'Fetching nog {0}@{1}.'.format(repoFullName, commitId))
+
+    tree = remote.getTree(commit['tree'], recursive=True)
+    fsTree = fileTree(tree)
+    writeFileTree(fsTree)
+
+    def removeStaleMeta(fsTree):
+        for p in iterAllMetaFiles():
+            if p not in fsTree:
+                os.unlink(p)
+                gitAdd(p)
+
+    removeStaleMeta(fsTree)
+
+    msg = dedent("""\
+        nog pull {0}@{1}{forced}
+
+        Nog-Commit-Id: {nogCommitId}
+    """)
+    msg = msg.format(
+            repoFullName, commitId[0:10],
+            forced=(' (forced)' if isForced else ''),
+            nogCommitId=commitId
+        )
+    try:
+        gitCommit(msg, allowEmpty=opt_allow_empty)
+    except subprocess.CalledProcessError as err:
+        printmsg(0, 'git commit failed, which usually means that there are '
+                 'no changes.  You can use --allow-empty to commit anyway.')
+        exit(err.returncode)
+
+
+def writeFileTree(fsTree):
+    for path, fileobj in fsTree.items():
+        printmsg(2, path)
+        content = fileobj['content']
+        dir = os.path.dirname(path)
+        if dir != '':
+            os.makedirs(dir, exist_ok=True)
+        with open(path, 'w') as fp:
+            fp.write(content)
+        gitAdd(path)
+
+
+def canFFNogToGit(nogCommit, gitCommitId):
+    for c in nogCommit['meta'].get('gitCommitIds', []):
+        try:
+            gitLine(['rev-parse', '-q', '--verify', c])
+            lst = gitLine(['rev-list', '-n', '1', gitCommitId + '..' + c],
+                          stderr=DEVNULL)
+            if lst == '':
+                return c
+        except:
+            pass
+    return None
+
+
+def cmdPush(args):
+    checkGitToplevel()
+    checkClean()
+
+    opt_allow_empty = args['--allow-empty']
+    opt_empty = args['--empty']
+    opt_force = args['--force']
+
+    repoFullName = nogGet('remote.repoFullName')
+    remote = RemoteRepo(repoFullName)
+
+    gitCommitId = gitRevParse('HEAD')
+    gitCommitInfo = gitShowCommitInfo('HEAD')
+
+    oldCommit = None
+    oldCommitId = remote.getMaster()
+    if oldCommitId != NULL_SHA1:
+        oldCommit = remote.getCommit(oldCommitId)
+
+    if oldCommit and gitCommitId in oldCommit['meta'].get('gitCommitIds', []):
+        printmsg(0, 'Already up-to-date.')
+        exit(0)
+
+    isForced = False
+    fromGitCommitId = None
+    if oldCommit:
+        if 'gitCommitIds' in oldCommit['meta']:
+            fromGitCommitId = canFFNogToGit(oldCommit, gitCommitId)
+            if not fromGitCommitId:
+                if opt_empty:
+                    isForced = True
+                    printmsg(0, 'push forced by --empty.')
+                elif opt_force >= 1:
+                    isForced = True
+                    printmsg(0, 'Forced push.')
+                else:
+                    gitCommitIds = oldCommit['meta']['gitCommitIds']
+                    msg = ('Cannot fast-forward: nog commit {0}, '
+                           'gitCommitIds: {1}.  '
+                           'Use -f to force push.')
+                    die(msg.format(oldCommitId, gitCommitIds))
+        else:
+            if opt_force >= 2:
+                isForced = True
+                printmsg(0, 'Cannot check fast-forward; pushing with -ff.')
+            else:
+                msg = ('Cannot check fast-forward; '
+                       'missing gitCommitIds in nog commit {0}.  '
+                       'Use -ff to force push.')
+                die(msg.format(oldCommitId))
+
+    gitTreeId = gitRevParse('HEAD^{tree}')
+    tree = gitMetaTree(gitTreeId)
+    canonicalizeTree(tree)
+
+    isEmpty = False
+    if opt_empty:
+        if not oldCommit:
+            die('No previous nog commit; cannot use --empty.')
+        if oldCommit['tree'] != tree['_id']:
+            die('Tree has changed; cannot use --empty.')
+        isEmpty = True
+    elif oldCommit and oldCommit['tree'] == tree['_id']:
+        if opt_allow_empty:
+            isEmpty = True
+            printmsg(1, 'Committing unchanged tree with --allow-empty.')
+        else:
+            die('The tree is up-to-date; use --allow-empty to force push.')
+
+    # Determine known entries to skip them during `postTree()`.  Use local git
+    # information and the stat API.
+    if fromGitCommitId:
+        fromGitTreeId = gitRevParse(fromGitCommitId + '^{tree}')
+        fromGitTree = gitMetaTree(fromGitTreeId)
+        canonicalizeTree(fromGitTree)
+        knownEntries = entrySets(fromGitTree)
+    else:
+        knownEntries = {'objects': set(), 'trees': set(), 'blobs': set()}
+
+    postCandidates = remote.postTreeDryRun(tree, skip=knownEntries)
+    postCandidates = remote.stat(postCandidates)
+    for e in postCandidates:
+        if e['status'] == 'exists':
+            # The dict entry names are the type with 's': 'tree' -> 'trees'.
+            knownEntries[e['type'] + 's'].add(e['sha1'])
+
+    # Upload to S3 in parallel and update knownEntries, so that any further
+    # blob uploads will be skipped.
+    uploadArgs = blobUploads(tree, skip=knownEntries)
+    with ThreadPoolExecutor(max_workers=S3_NPARALLEL) as executor:
+        def uploadOne(u):
+            remote.uploadBlob(*u)
+            return u[0]
+        for sha1 in executor.map(uploadOne, uploadArgs):
+            knownEntries['blobs'].add(sha1)
+
+    treeId = remote.postTreeBulk(tree, skip=knownEntries)
+
+    fsTree = fileTree(tree)
+    writeFileTree(fsTree)
+    if haveStagedGitChanges():
+        gitCommit('nog push meta update')
+    gitCommitId = gitRevParse('HEAD')
+
+    ci = gitCommitInfo
+    ci['abbrevId'] = ci['id'][0:8]
+    ci['forced'] = ('forced ' if isForced else '')
+    ci['empty'] = ('empty ' if isEmpty else '')
+    message = dedent("""\
+        {forced}{empty}nog push of original git commit {abbrevId} (see meta).
+
+        {message}
+    """)
+    newCommit = {
+        'subject': ci['subject'] + (' (forced nog push)' if isForced else ''),
+        'message': message.format(**ci),
+        'tree': treeId,
+        'parents': [],
+        'authors': [ci['author']],
+        'authorDate': ci['authorDate'],
+        'committer': ci['committer'],
+        'commitDate': ci['commitDate'],
+        'meta': {}
+    }
+    if isEmpty:
+        gitCommitIds = oldCommit['meta'].get('gitCommitIds', [])
+    else:
+        gitCommitIds = []
+    gitCommitIds.append(gitCommitId)
+    newCommit['meta']['gitCommitIds'] = gitCommitIds
+
+    if oldCommitId != NULL_SHA1:
+        newCommit['parents'].append(oldCommitId)
+    newCommitId = remote.postCommit(newCommit)
+    remote.updateRef('branches/master', newCommitId, oldCommitId)
+
+    printmsg(0, 'nog commit {0}@{1}'.format(repoFullName, newCommitId))
+
+
+def gitMetaTree(treeSha1, prefix=None, name=None):
+    prefix = prefix or ''
+    treeContent = None
+    entries = []
+    for e in gitLsTree(treeSha1):
+        (ty, sha1, path) = e
+        if path == '__meta__.json':
+            if ty != 'blob':
+                warn('Ignoring non-blob {0}{1}'.format(prefix, name))
+                continue
+            treeContent = gitCatBlobJson(sha1)
+        elif path.endswith('.meta.json'):
+            if ty != 'blob':
+                warn('Ignoring non-blob {0}{1}'.format(prefix, name))
+                continue
+            content = gitCatBlobJson(sha1)
+            if 'blob' not in content:
+                content['blob'] = NULL_SHA1
+            entries.append(content)
+        elif ty == 'tree':
+            sub = gitMetaTree(sha1, prefix=prefix + path + '/', name=path)
+            if sub:
+                entries.append(sub)
+        else:
+            printmsg(2, 'Ignoring {0}{1}'.format(prefix, name))
+    if len(entries) == 0:
+        return None
+    treeContent = treeContent or {
+            'name': name or '.',
+            'order': 'sorted',
+            'meta': {}
+        }
+    treeContent['entries'] = entries
+    return treeContent
+
+
+def pick(d, *args):
+    return {k: v for k, v in d.items() if k in args}
+
+
+def canonicalizeTree(tree):
+    order = tree.get('order')
+    tree['entries'].sort(key=lambda e: e['name'])
+    if order == 'index':
+        last = 1000000000000
+        tree['entries'].sort(key=lambda e: e.get('index', last))
+
+    collapsed = []
+    for e in tree['entries']:
+        if 'blob' in e:  # object
+            id = contentId(pick(e, 'name', 'blob', 'meta'))
+            e['_id'] = id
+            collapsed.append({'type': 'object', 'sha1': id})
+        else:  # tree
+            canonicalizeTree(e)
+            collapsed.append({'type': 'tree', 'sha1': e['_id']})
+
+    tree['_id'] = contentId({
+            'name': tree['name'],
+            'meta': tree['meta'],
+            'entries': collapsed
+        })
+
+
+def entrySets(tree):
+    trees = set()
+    objects = set()
+    blobs = set()
+
+    def walk(tree):
+        trees.add(tree['_id'])
+        for e in tree['entries']:
+            if 'blob' in e:  # object
+                objects.add(e['_id'])
+                blobs.add(e['blob'])
+            else:  # tree
+                walk(e)
+    walk(tree)
+    return {'trees': trees, 'objects': objects, 'blobs': blobs}
+
+
+def contentId(e):
+    h = hashlib.sha1()
+    h.update(stringify_canonical(e))
+    return h.hexdigest()
+
+
+def gitCatBlobJson(id):
+    return json.loads(gitMultiline(['cat-file', 'blob', id]))
+
+
+def gitLsTree(tree):
+    res = gitMultiline(['ls-tree', '-z', tree])
+    for e in res[:-1].split('\x00'):
+        (info, path) = e.split('\t')
+        (mode, ty, sha1) = info.split(' ')
+        if mode == '120000':
+            ty = 'symlink'
+        yield (ty, sha1, path)
+
+
+def cmdAdd(args):
+    if args['--update']:
+        return addUpdate()
+
+    if args['--blob']:
+        storage = S_BLOB
+    elif args['--content']:
+        storage = S_CONTENT
+    else:
+        storage = S_META
+    for path in args['<file>']:
+        add(path, storage=storage)
+
+
+def isSha1PlaceholderFile(path):
+    s = os.path.getsize(path)
+    if s != 41 and s != 42:
+        return False
+    with open(path, 'r') as fp:
+        c = fp.read()
+    return re.match('^[0-9a-f]{40}', c)
+
+
+def add(path, storage):
+    path = re.sub('\.meta\.json$', '', path)
+    metaPath = path + '.meta.json'
+
+    if isSha1PlaceholderFile(path):
+        die('Refusing to add sha1 placeholder content: ' + path)
+
+    if os.path.exists(metaPath):
+        with open(metaPath, 'r') as fp:
+            content = json.load(fp)
+    else:
+        content = {}
+
+    content['name'] = os.path.basename(path)
+    if storage is S_BLOB:
+        content['blob'] = sha1_hex(path)
+    else:
+        content['blob'] = NULL_SHA1
+
+    meta = content.get('meta', {})
+    if storage is S_CONTENT:
+        with open(path, 'r') as fp:
+            meta['content'] = fp.read()
+    if storage is S_META:
+        meta['contentSha1'] = sha1_hex(path)
+
+    content['meta'] = meta
+    with open(metaPath, 'w') as fp:
+        fp.write(stringify_pretty(content))
+
+    gitAdd(metaPath)
+
+
+def addUpdate():
+    for metaPath in iterMetaFiles():
+        with open(metaPath, 'r') as fp:
+            content = json.load(fp)
+        path = re.sub('\.meta\.json$', '', metaPath)
+        if not os.path.exists(path):
+            continue
+        if content['blob'] != NULL_SHA1:
+            add(path, S_BLOB)
+        elif 'content' in content['meta']:
+            add(path, S_CONTENT)
+
+
+def cmdLsFiles(args):
+    files = args['<file>']
+    seen = {}
+    for metaPath in gitLsFiles(['--'] + files):
+        # Try to guess the meta path so that file patterns like '*.md' work.
+        if not metaPath.endswith('.meta.json'):
+            metaPath = metaPath + '.meta.json'
+            if not os.path.exists(metaPath):
+                continue
+        if metaPath in seen:
+            continue
+        seen[metaPath] = True
+
+        with open(metaPath, 'r') as fp:
+            content = json.load(fp)
+        path = re.sub('\.meta\.json$', '', metaPath)
+        if content['blob'] != NULL_SHA1:
+            s = 'b'
+        elif 'content' in content['meta']:
+            s = 'c'
+        else:
+            s = 'm'
+        if os.path.exists(path):
+            c = 'x'
+        else:
+            c = '_'
+        printmsg(0, s + c + ' ' + path)
+
+
+def cmdStatus(args):
+    opt_remote = args['--remote']
+    opt_all = args['--all']
+    opt_n = int(args['-n'] or 10)
+
+    if opt_all:
+        printmsg(0, '# Files')
+        statusOther()
+        statusModified()
+        printmsg(0, '\n# Remote')
+        statusRemote(opt_n)
+        return
+
+    if opt_remote:
+        statusRemote(opt_n)
+    else:
+        statusOther()
+        statusModified()
+
+
+def statusRemote(limit):
+    repoFullName = nogGet('remote.repoFullName')
+    remote = RemoteRepo(repoFullName)
+    printmsg(0, 'url  {0}'.format(remote.repoUrl()))
+
+    commitId = remote.getMaster()
+    commit = remote.getCommit(commitId)
+    gitCommitId = gitRevParse('HEAD')
+    gitCI = gitShowCommitInfo('HEAD')
+    nogCI = {
+            'abbrevId': commit['_id'][0:10],
+            'subject': commit['subject']
+        }
+    printmsg(0, 'git  {abbrevId}  {subject}'.format(**gitCI))
+    printmsg(0, 'nog  {abbrevId}  {subject}'.format(**nogCI))
+
+    printmsg(1, stringify_pretty(commit))
+
+    if isGitCorrespondingNog(gitCommitId, commit):
+        printmsg(0, 'up-to-date')
+    else:
+        c = canFFNogToGit(commit, gitCommitId)
+        if c:
+            msg = 'push can fast-forward nog from git {0}'.format(c[0:10])
+            printmsg(0, msg)
+        else:
+            printmsg(0, 'push requires force')
+
+        nog = canFFGitToNog(gitCommitId, commit, remote)
+        if nog:
+            printmsg(0, 'pull can fast-forward git with nog {0}..{1}:'
+                        .format(nog[-1]['_id'][0:10], nog[0]['_id'][0:10]))
+            for n in nog:
+                printmsg(0, '  nog  {0}  {1}'.format(n['_id'], n['subject']))
+                printmsg(1, stringify_pretty(n))
+        else:
+            printmsg(0, 'pull requires force')
+
+    printRecentHistory(commit, gitCommitId, remote, limit)
+
+
+def printRecentHistory(nog, git, remote, limit=10):
+    def makeNogToGitDict(rev):
+        d = {}
+        for c in gitLogCommitsWithNogCommit(rev):
+            d[gitShowNogCommitId(c)] = c
+        return d
+
+    def localGitCommitForNog(nog):
+        for c in nog['meta'].get('gitCommitIds', []):
+            try:
+                # rev-parse does not throw if c exists in git.
+                gitLine(['rev-parse', '-q', '--verify', c])
+                lst = gitLine(['rev-list', '-n', '1', 'HEAD..' + c],
+                              stderr=DEVNULL)
+                if lst == '':
+                    return c
+            except:
+                pass
+        return None
+
+    printmsg(0, '')
+    printmsg(0, 'nog history (n={0}):'.format(limit))
+    printmsg(0, '  git HEAD    nog master')
+    nogToGitFromGit = makeNogToGitDict(git)
+    while limit:
+        nogId = nog['_id']
+        if nogId in nogToGitFromGit:
+            gitId = nogToGitFromGit[nogId]
+        else:
+            gitId = localGitCommitForNog(nog) or '-         '
+        printmsg(0, '  {0}  {1}  {2}'.format(gitId[0:10], nogId[0:10],
+                                             nog['subject']))
+        parents = nog['parents']
+        if len(parents) == 0:
+            return
+        nog = remote.getCommit(parents[0])
+        limit = limit - 1
+
+
+def statusModified():
+    # Show files that are modified compared to the index.
+    for metaPath in iterMetaFiles():
+        path = re.sub('\.meta\.json$', '', metaPath)
+
+        if not os.path.exists(path):
+            continue
+        if mtimeEq(path, metaPath):
+            continue
+
+        with open(metaPath, 'r') as fp:
+            content = json.load(fp)
+        if content['blob'] != NULL_SHA1:
+            if sha1_hex(path) == content['blob']:
+                syncMtime(path, metaPath)
+                continue
+        elif 'content' in content['meta']:
+            if sha1_hex(path) == sha1s_hex(content['meta']['content']):
+                syncMtime(path, metaPath)
+                continue
+        else:  # Meta only
+            continue
+        printmsg(0, 'M {0}'.format(path))
+
+
+def statusOther():
+    # Show files that are not in nog, excluding nogignored files.
+    def iterNogIgnoredFiles():
+        return gitLsFiles([
+                '--cached', '--other',
+                '--ignored', '--exclude-per-directory', '.nogignore'
+            ])
+
+    def iterMostFiles():
+        return gitLsFiles(['--cached', '--other'])
+
+    nogignored = {f: True for f in iterNogIgnoredFiles()}
+    metaFiles = {f: True for f in iterAllMetaFiles()}
+    for path in iterMostFiles():
+        if path in nogignored:
+            continue
+        if path in metaFiles:
+            continue
+        if (path + '.meta.json') in metaFiles:
+            continue
+        printmsg(0, '? {0}'.format(path))
+
+
+def syncMtime(p, q):
+    mp = os.path.getmtime(p)
+    mq = os.path.getmtime(q)
+    if mp == mq:
+        return
+    mtime = max(mp, mq)
+    now = time()
+    atime = now
+    os.utime(p, (atime, mtime))
+    os.utime(q, (atime, mtime))
+
+
+def mtimeEq(p, q):
+    return (os.path.getmtime(p) == os.path.getmtime(q))
+
+
+def sha1s_hex(s):
+    h = hashlib.sha1()
+    h.update(s.encode('utf-8'))
+    return h.hexdigest()
+
+
+def iterMetaFiles():
+    return gitLsFiles(['--', '*.meta.json'])
+
+
+def iterAllMetaFiles():
+    return gitLsFiles(['--', '*.meta.json', '*__meta__.json'])
+
+
+def gitLsFiles(args=None):
+    args = args or []
+    res = gitMultiline(['ls-files', '-z'] + args)
+    for p in res[:-1].split('\x00'):
+        yield p
+
+
+def cmdCheckout(args):
+    checkGitWorktree()
+    remote = RemoteRepo(nogGet('remote.repoFullName'))
+    paths = args['<file>']
+    with ThreadPoolExecutor(max_workers=S3_NPARALLEL) as executor:
+        for p in paths:
+            executor.submit(checkout, p, remote)
+
+
+def checkout(path, remote):
+    path = re.sub('\.meta\.json$', '', path)
+    metaPath = path + '.meta.json'
+    with open(metaPath, 'r') as fp:
+        content = json.load(fp)
+
+    if content['blob'] != NULL_SHA1:
+        storage = S_BLOB
+    elif 'content' in content['meta']:
+        storage = S_CONTENT
+    else:
+        storage = S_META
+
+    if storage is S_META:
+        printmsg(0, 'no content: {0}'.format(path))
+        return
+
+    if storage is S_CONTENT:
+        printmsg(0, 'content: {0}'.format(path))
+        with open(path, 'w') as fp:
+            fp.write(content['meta']['content'])
+        return
+
+    if storage is S_BLOB:
+        sha1 = content['blob']
+        try:
+            if sha1_hex(path) == sha1:
+                printmsg(0, 'up-to-date blob: {0}'.format(path))
+                return
+        except:
+            pass
+        printmsg(0, 'fetching blob: {0}'.format(path))
+        remote.getBlobContent(content['blob'], path=path)
+        printmsg(0, 'done fetching blob: {0}'.format(path))
+        return
+
+
+class RemoteRepo:
+    def __init__(self, repoFullName):
+        self.repoFullName = repoFullName
+        self.apiUrl = API_URL
+
+    def repoUrl(self):
+        return self._base()
+
+    def postRepo(self):
+        url = self.apiUrl + '/repos'
+        url = sign_req('POST', url)
+        content = {
+            'repoFullName': self.repoFullName
+        }
+        res = session.post(
+                url, headers=contentTypeJSON, data=stringify(content),
+                timeout=requestTimeout)
+        checkStatus(res, 201)
+        return res.json()["data"]
+
+    def getMaster(self):
+        return self.getRef('branches/master')["sha1"]
+
+    def getRef(self, refName):
+        res = self._get('db/refs/{0}'.format(refName))
+        return res["entry"]
+
+    def getCommit(self, commitId):
+        return self._get('db/commits/{0}?format=minimal'.format(commitId))
+
+    def getTree(self, treeId, recursive=False):
+        if recursive:
+            return self._get(
+                    'db/trees/{0}?expand=99999&format=minimal'.format(treeId))
+        else:
+            return self._get('db/trees/{0}?format=minimal'.format(treeId))
+
+    def getBlobContent(self, blobId, path=None):
+        url = '{0}/db/blobs/{1}/content'.format(self._base(), blobId)
+        url = sign_req('GET', url)
+        if path:
+            chunk_size = 8 * 1024
+            res = session.get(url, stream=True, timeout=requestTimeout)
+            with open(path, 'wb') as fp:
+                for chunk in res.iter_content(chunk_size):
+                    fp.write(chunk)
+            checkStatus(res, 200)
+            return
+        else:
+            res = session.get(url, timeout=requestTimeout)
+            checkStatus(res, 200)
+            return res.content
+
+    def postCommit(self, content):
+        url = '{0}/db/commits?format=minimal'.format(self._base())
+        url = sign_req('POST', url)
+        res = session.post(
+                url, headers=contentTypeJSON, data=stringify(content),
+                timeout=requestTimeout)
+        checkStatus(res, 201)
+        return res.json()["data"]["_id"]
+
+    def updateRef(self, refName, newCommit, oldCommit):
+        url = '{0}/db/refs/{1}'.format(self._base(), refName)
+        url = sign_req('PATCH', url)
+        content = {
+            'new': newCommit,
+            'old': oldCommit
+        }
+        res = session.patch(
+                url, headers=contentTypeJSON, data=stringify(content),
+                timeout=requestTimeout)
+        checkStatus(res, 200)
+        return res.json()["data"]
+
+    def postObject(self, content):
+        url = '{0}/db/objects?format=minimal'.format(self._base())
+        url = sign_req('POST', url)
+        if not content['blob']:
+            content = copy(content)
+            content['blob'] = '0000000000000000000000000000000000000000'
+        res = session.post(
+                url, headers=contentTypeJSON, data=stringify(content),
+                timeout=requestTimeout)
+        checkStatus(res, 201)
+        return res.json()['data']['_id']
+
+    # This could be a free function.  But it is here to keep it close to
+    # `postTree()`, since both must be kept in sync.
+    def postTreeDryRun(self, tree, skip=None):
+        skip = skip or {'objects': (), 'trees': (), 'blobs': ()}
+        postEntries = []
+
+        def walk(tree, prefix=None):
+            if tree['_id'] in skip['trees']:
+                return  # skip
+            prefix = prefix or ''
+            for e in tree['entries']:
+                fullPath = prefix + e['name']
+                if isObjectEntry(e):
+                    blob = e['blob']
+                    if (isContentBlob(blob) and os.path.exists(fullPath) and
+                            blob not in skip['blobs']):
+                        postEntries.append({'type': 'blob', 'sha1': blob})
+                    if e['_id'] not in skip['objects']:
+                        postEntries.append({
+                                'type': 'object', 'sha1': e['_id']
+                            })
+                elif isTreeEntry(e):
+                    walk(e, prefix=(fullPath + '/'))
+            postEntries.append({'type': 'tree', 'sha1': tree['_id']})
+        walk(tree)
+        return postEntries
+
+    def postTree(self, tree, prefix=None, skip=None):
+        skip = skip or {'objects': (), 'trees': (), 'blobs': ()}
+        if tree.get('_id', NULL_SHA1) in skip['trees']:
+            printmsg(1, 'skipping post tree {0}'.format(tree['_id']))
+            return tree['_id']
+
+        prefix = prefix or ''
+        collapsedEntries = []
+        for e in tree['entries']:
+            fullPath = prefix + e['name']
+            if isObjectEntry(e):
+                blob = e['blob']
+                if isContentBlob(blob):
+                    if os.path.exists(fullPath):
+                        if blob in skip['blobs']:
+                            msg = 'skipping upload blob {0}'.format(blob)
+                            printmsg(1, msg)
+                        else:
+                            self.uploadBlob(blob, e['name'], fullPath)
+                    else:
+                        msg = 'Skipping blob upload (not available): {0}'
+                        printmsg(0, msg.format(fullPath))
+                if e.get('_id', NULL_SHA1) in skip['objects']:
+                    objId = e['_id']
+                    printmsg(1, 'skipping post object {0}'.format(objId))
+                else:
+                    objId = self.postObject(pick(e, 'name', 'blob', 'meta'))
+                    if e.get('_id', NULL_SHA1) != objId:
+                        msg = 'Object id mismatch; expected {0}, got {1}.'
+                        msg = msg.format(e['_id'], objId)
+                        raise RuntimeError(msg)
+                collapsedEntries.append({'type': 'object', 'sha1': objId})
+            elif isTreeEntry(e):
+                treeId = self.postTree(e, prefix=(fullPath + '/'), skip=skip)
+                if ('_id' in 'e') and (e['_id'] != treeId):
+                    msg = 'Tree id mismatch; expected {0}, got {1}.'
+                    msg = msg.format(e['_id'], treeId)
+                    raise RuntimeError(msg)
+                collapsedEntries.append({'type': 'tree', 'sha1': treeId})
+            else:
+                raise RuntimeError('Unknown entry type.')
+        tree = copy(tree)
+        tree['entries'] = collapsedEntries
+        return self.postSimpleTree(pick(tree, 'name', 'entries', 'meta'))
+
+    # `postTreeBulk()` assumes that blobs have been uploaded and all ids are
+    # available.
+    def postTreeBulk(self, tree, skip=None):
+        skip = skip or {'objects': (), 'trees': (), 'blobs': ()}
+        postEntries = []
+        expect = []
+
+        def walk(tree, prefix):
+            if tree['_id'] in skip['trees']:
+                printmsg(1, 'skipping post tree {0}'.format(tree['_id']))
+                return
+            collapsedEntries = []
+            for e in tree['entries']:
+                fullPath = prefix + e['name']
+                if isObjectEntry(e):
+                    objId = e['_id']
+                    collapsed = {'type': 'object', 'sha1': objId}
+                    collapsedEntries.append(collapsed)
+                    if objId in skip['objects']:
+                        printmsg(1, 'skipping post object {0}'.format(objId))
+                    else:
+                        postEntries.append(pick(e, 'name', 'blob', 'meta'))
+                        expect.append(collapsed)
+                elif isTreeEntry(e):
+                    walk(e, prefix=(fullPath + '/'))
+                    collapsedEntries.append({'type': 'tree', 'sha1': e['_id']})
+                else:
+                    raise RuntimeError('Unknown entry type.')
+            tree = copy(tree)
+            tree['entries'] = collapsedEntries
+            postEntries.append(pick(tree, 'name', 'entries', 'meta'))
+            expect.append({'type': 'tree', 'sha1': tree['_id']})
+        walk(tree, '')
+        res = self.postBulk(postEntries)
+        for e, r in zip(expect, res):
+            if e != r:
+                msg = 'Response entry mismatch (expected: {0}, got: {1})'
+                msg = msg.format(e, r)
+                raise RuntimeError(msg)
+        return tree['_id']
+
+    def postSimpleTree(self, tree):
+        url = '{0}/db/trees?format=minimal'.format(self._base())
+        url = sign_req('POST', url)
+        content = {
+            'tree': tree
+        }
+        res = session.post(
+                url, headers=contentTypeJSON, data=stringify(content),
+                timeout=requestTimeout)
+        checkStatus(res, 201)
+        return res.json()["data"]["_id"]
+
+    # The entries should probably be send in multiple chunks to avoid violating
+    # the body size limit.
+    def postBulk(self, entries):
+        url = '{0}/db/bulk'.format(self._base())
+        url = sign_req('POST', url)
+        content = {
+            'entries': entries
+        }
+        res = session.post(
+                url, headers=contentTypeJSON, data=stringify(content),
+                timeout=requestTimeout)
+        checkStatus(res, 201)
+        return res.json()['data']['entries']
+
+    def uploadBlob(self, blob, name, path):
+        sha1 = sha1_hex(path)
+        if sha1 != blob:
+            msg = "Sha1 mismatch for '{0}'; expected '{1}', got '{2}'."
+            msg = msg.format(path, blob, sha1)
+            raise RuntimeError(msg)
+
+        def putS3(part, path):
+            start = part["start"]
+            end = part["end"]
+            with open(path, 'rb') as fp:
+                fp.seek(start)
+                data = fp.read(end - start)
+            res = session.put(part["href"], data=data,
+                    timeout=requestTimeout)
+            res.raise_for_status()
+            return res.headers["etag"]
+
+        def getNextUploadParts(url):
+            url = sign_req('GET', url)
+            res = session.get(url, timeout=requestTimeout)
+            checkStatus(res, 200)
+            return res.json()["data"]
+
+        def postCompleteUpload(url, parts):
+            url = sign_req('POST', url)
+            content = {'s3Parts': parts}
+            res = session.post(
+                    url, headers=contentTypeJSON, data=json.dumps(content),
+                    timeout=requestTimeout)
+            checkStatus(res, 201)
+            return res.json()["data"]
+
+        content = {'size': os.path.getsize(path), 'name': name}
+        msg = "uploading blob {0}: ".format(blob)
+        printmsg(0, "{0}start '{1}', {2} ... ".format(msg, path, content))
+        res = self.startUpload(blob, content)
+        if not res:
+            printmsg(0, msg + 'already available.')
+            return
+        completeUploadUrl = res["upload"]["href"]
+        s3Parts = []
+        parts = res["parts"]
+        while True:
+            part = parts["items"][0]
+            etag = putS3(part, path)
+            s3Parts.append({
+                    'PartNumber': part["partNumber"],
+                    'ETag': etag
+                })
+            nextPartUrl = parts["next"]
+            if not nextPartUrl:
+                break
+            parts = getNextUploadParts(nextPartUrl)
+        postCompleteUpload(completeUploadUrl, s3Parts)
+        printmsg(0, msg + 'ok.')
+
+    def startUpload(self, sha1, content):
+        # Limit to a single part, because parts are uploaded sequentially.
+        url = '{0}/db/blobs/{1}/uploads?limit=1'.format(self._base(), sha1)
+        url = sign_req('POST', url)
+        res = session.post(
+                url, headers=contentTypeJSON, data=json.dumps(content),
+                timeout=requestTimeout)
+        if res.status_code == 409:  # Blob already exists
+            return None
+        checkStatus(res, 201)
+        return res.json()["data"]
+
+    def stat(self, entries):
+        url = '{0}/db/stat'.format(self._base())
+        url = sign_req('POST', url)
+        content = {'entries': entries}
+        res = session.post(
+                url, headers=contentTypeJSON, data=stringify(content),
+                timeout=requestTimeout)
+        checkStatus(res, 200)
+        return res.json()['data']['entries']
+
+    def _get(self, path):
+        url = '{0}/{1}'.format(self._base(), path)
+        url = sign_req('GET', url)
+        res = session.get(url, timeout=requestTimeout)
+        checkStatus(res, 200)
+        return res.json()["data"]
+
+    def _getUrl(self, url):
+        url = sign_req('GET', url)
+        res = session.get(url, timeout=requestTimeout)
+        checkStatus(res, 200)
+        return res.json()["data"]
+
+    def _base(self):
+        return '{0}/repos/{1}'.format(self.apiUrl, self.repoFullName)
+
+
+# Return a list of required upload tuples (sha1, name, path).  Each sha1
+# appears only once.
+def blobUploads(tree, skip=None):
+    skip = skip or {'trees': (), 'blobs': ()}
+    seen = set()
+    uploads = []
+
+    def walk(tree, prefix=None):
+        if tree['_id'] in skip['trees']:
+            return  # skip
+        prefix = prefix or ''
+        for e in tree['entries']:
+            fullPath = prefix + e['name']
+            if isObjectEntry(e):
+                blob = e['blob']
+                if (isContentBlob(blob) and (blob not in skip['blobs']) and
+                        (blob not in seen)):
+                    if os.path.exists(fullPath):
+                        seen.add(blob)
+                        uploads.append((blob, e['name'], fullPath))
+                    else:
+                        msg = 'Skipping blob upload (no content file): {0}'
+                        printmsg(0, msg.format(fullPath))
+            elif isTreeEntry(e):
+                walk(e, prefix=(fullPath + '/'))
+    walk(tree)
+    return uploads
+
+
+def isContentBlob(blob):
+    if not blob:
+        return False
+    if blob == NULL_SHA1:
+        return False
+    return True
+
+
+def isObjectEntry(e):
+    return ('blob' in e)
+
+
+def isTreeEntry(e):
+    return ('entries' in e)
+
+
+def checkStatus(res, expectedStatusCode):
+    if res.status_code == expectedStatusCode:
+        return
+    try:
+        data = res.json()
+    except ValueError:
+        data = 'no response JSON.'
+    msg = 'Unexpected status code; expected {0}, got {1}: {2}'
+    msg = msg.format(expectedStatusCode, res.status_code, data)
+    raise RuntimeError(msg)
+
+
+def sign_req(method, url):
+    authkeyid = os.environ['NOG_KEYID']
+    secretkey = os.environ['NOG_SECRETKEY'].encode()
+    authalgorithm = 'nog-v1'
+    authdate = datetime.utcnow().strftime('%Y-%m-%dT%H%M%SZ')
+    authexpires = '600'
+    authnonce = ('%x' % getrandbits(40))
+
+    parsed = urlparse(url)
+    if parsed.query == '':
+        path = parsed.path
+        suffix = '?'
+    else:
+        path = parsed.path + '?' + parsed.query
+        suffix = '&'
+    suffix = suffix + 'authalgorithm=' + authalgorithm
+    suffix = suffix + '&authkeyid=' + authkeyid
+    suffix = suffix + '&authdate=' + authdate
+    suffix = suffix + '&authexpires=' + authexpires
+    suffix = suffix + '&authnonce=' + authnonce
+
+    stringToSign = (method + '\n' + path + suffix + '\n').encode()
+    authsignature = hexlify(hmac.new(
+            secretkey, stringToSign, digestmod=hashlib.sha256
+        ).digest()).decode()
+    suffix = suffix + '&authsignature=' + authsignature
+    return url + suffix
+
+
+class FileTreeBuilder:
+    def __init__(self):
+        self.files = {}
+
+    def addTree(self, tree):
+        return self._addTree(tree, prefix='', index=None)
+
+    def _addTree(self, tree, prefix, index):
+        def entriesAreSortedAndUnique(entries):
+            names = [e['name'] for e in entries]
+            return (sorted(set(names)) == names)
+        useIndex = (not entriesAreSortedAndUnique(tree['entries']))
+
+        content = {
+                '_id': tree['_id'],
+                'name': tree['name'],
+                'order': ('index' if useIndex else 'sorted'),
+                'meta': tree['meta']
+            }
+        if index is not None:
+            content['index'] = index
+        self.files[prefix + '__meta__.json'] = {
+                'content': stringify_pretty(content)
+            }
+
+        for i, e in enumerate(tree['entries']):
+            index = (i if useIndex else None)
+            if 'entries' in e:  # tree
+                path = self._uniquePath(prefix + fsSafeName(e['name']))
+                self._addTree(e, prefix=path + '/', index=index)
+            else:  # object
+                self._addObject(e, prefix=prefix, index=index)
+
+    def _addObject(self, obj, prefix, index):
+        path = self._uniquePath(prefix + fsSafeName(obj['name']) +
+                                '.meta.json')
+        content = {
+                '_id': obj['_id'],
+                'name': obj['name'],
+                'blob': obj['blob'],
+                'meta': obj['meta']
+            }
+        if index is not None:
+            content['index'] = index
+        self.files[path] = {'content': stringify_pretty(content)}
+
+    def _uniquePath(self, path):
+        def isUnique(p):
+            for suffix in ['', '/__meta__.json', '.meta.json']:
+                if (p + suffix) in self.files:
+                    return False
+            return True
+        i = 2
+        stem, ext = os.path.splitext(path)
+        u = path
+        while not isUnique(u):
+            u = stem + '_' + str(i) + ext
+            i = i + 1
+        return u
+
+
+# Only regular chars, no whitespace, no dot at the beginning to avoid hidden
+# files.
+def fsSafeName(name):
+    name = re.sub(r'[^a-zA-Z0-9._-]', '_', name)
+    name = re.sub(r'^[.]+', '_', name)
+    return name
+
+
+def fileTree(tree):
+    builder = FileTreeBuilder()
+    builder.addTree(tree)
+    return builder.files
+
+
+def gitDir():
+    return gitLine('rev-parse --git-dir')
+
+
+def nogDir():
+    return gitDir() + '/nog'
+
+
+def checkGitWorktree():
+    if not gitLine('rev-parse --is-inside-work-tree') == 'true':
+        die("Require command to be run inside a git worktree.")
+
+
+def checkGitToplevel():
+    checkGitWorktree()
+    if not gitLine('rev-parse --show-prefix') == '':
+        die("Require command to run in toplevel of a git worktree.")
+
+
+def haveStagedGitChanges():
+    return gitCode('diff-index --quiet --cached HEAD')
+
+
+def checkClean():
+    if haveStagedGitChanges():
+        die('There are staged changes.')
+    # Do not use `git diff-files` here, since it wrongly reports changes with
+    # empty files and silo.
+    if gitMultiline('status --porcelain') != '':
+        die('There are unstaged changes or untracked files.')
+
+
+# Use -f to override gitignore.
+def gitAdd(paths):
+    if type(paths) is str:
+        paths = [paths]
+    gitCheck(['add', '-f', '--'] + paths)
+
+
+def gitCommit(msg, allowEmpty=False):
+    opts = []
+    if allowEmpty:
+        opts.append('--allow-empty')
+    gitCheck(['commit'] + opts + ['-m', msg])
+
+
+def gitRevParse(name):
+    return gitLine(['rev-parse', name])
+
+
+def gitShowCommitInfo(rev):
+    id = gitRevParse(rev)
+    return {
+        'id': id,
+        'abbrevId': id[0:10],
+        'subject': gitShowSubject(rev),
+        'message': gitShowMessageBody(rev),
+        'author': gitShowAuthor(rev),
+        'authorDate': gitShowAuthorDate(rev),
+        'committer': gitShowCommitter(rev),
+        'commitDate': gitShowCommitDate(rev),
+    }
+
+
+def gitShowSubject(rev):
+    return gitShowLine(rev, '%s')
+
+
+def gitShowMessageBody(rev):
+    return gitShowBlock(rev, '%b')
+
+
+def gitShowAuthor(rev):
+    return gitShowLine(rev, '%an <%ae>')
+
+
+def gitShowAuthorDate(rev):
+    return gitShowDate(rev, '%ad')
+
+
+def gitShowCommitter(rev):
+    return gitShowLine(rev, '%cn <%ce>')
+
+
+def gitShowCommitDate(rev):
+    return gitShowDate(rev, '%cd')
+
+
+def gitShowNogCommitId(rev):
+    body = gitShowMessageBody(rev)
+    for line in body.split('\n'):
+        m = re.match('^Nog-Commit-Id: ([0-9a-f]{40})$', line)
+        if m:
+            return m.group(1)
+    return None
+
+
+def gitLogCommitsWithNogCommit(rev):
+    res = gitMultiline(['log', '--grep', '^Nog-Commit-Id: ', '--pretty=%H'])
+    if res == '':
+        return ()
+    else:
+        return res[:-1].split('\n')
+
+
+def gitShowLine(rev, pretty):
+    return gitLine(['show', '-s', '--pretty=' + pretty, rev])
+
+
+def gitShowBlock(rev, pretty):
+    return gitMultiline(['show', '-s', '--pretty=' + pretty, rev])
+
+
+# `gitShowDate()` gets the date from git and converts it to an ISO UTC string
+# without fractional seconds.
+def gitShowDate(rev, pretty):
+    res = gitLine(['show', '-s', '--date=iso', '--pretty=' + pretty, rev])
+    # Parse with timezone offset and convert to UTC.
+    res = datetime.strptime(res, '%Y-%m-%d %H:%M:%S %z')
+    res = res.astimezone(timezone.utc)
+    res = datetime.strftime(res, '%Y-%m-%dT%H:%M:%SZ')
+    return res
+
+
+def gitMultiline(args):
+    if type(args) is str:
+        args = args.split(' ')
+    return check_output(['git'] + args).decode('utf-8')
+
+
+def gitLine(args, stderr=None):
+    if type(args) is str:
+        args = args.split(' ')
+    res = check_output(['git'] + args, stderr=stderr)
+    return res.decode('utf-8').rstrip('\n')
+
+
+def gitCheck(args):
+    if type(args) is str:
+        args = args.split(' ')
+    return check_call(['git'] + args)
+
+
+def gitCode(args):
+    if type(args) is str:
+        args = args.split(' ')
+    return call(['git'] + args)
+
+
+def stringify_pretty(d):
+    return json.dumps(d, sort_keys=True, ensure_ascii=False, indent=2) + '\n'
+
+
+def stringify_canonical(d):
+    return json.dumps(
+            d, sort_keys=True, ensure_ascii=False, separators=(',', ':')
+        ).encode('utf-8')
+
+
+def stringify(d):
+    return json.dumps(
+            d, ensure_ascii=False, separators=(',', ':')
+        ).encode('utf-8')
+
+
+def sha1_hex(path):
+    BLOCKSIZE = 8 * 1024
+    h = hashlib.sha1()
+    with open(path, 'rb') as fp:
+        while True:
+            buf = fp.read(BLOCKSIZE)
+            if len(buf) == 0:
+                break
+            h.update(buf)
+    return h.hexdigest()
+
+
+def die(msg):
+    sys.stderr.write('Error: ')
+    sys.stderr.write(msg)
+    sys.stderr.write('\n')
+    exit(1)
+
+
+if __name__ == '__main__':
+    main()

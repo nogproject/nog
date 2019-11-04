@@ -1,0 +1,57 @@
+template(name='nogDataBoxStart')
+  .div
+    .row
+      .col-sm-12
+        h1 Welcome to the Nog Data Box
+        br
+        form(role="form").form-inline.js-create-repo
+          div.form-group
+            label(for="secretCodeInput") Please enter code:
+            input.form-control.js-secret-code(
+                type="text", id="secretCodeInput")
+          button(type="submit").btn.btn-default Create data box
+        +errorDisplay
+
+
+template(name='nogDataBox')
+  h3 Nog Data Box
+  if Template.subscriptionsReady
+    +nogDataBoxContent
+  else
+    | Loading ...
+
+
+template(name='nogDataBoxContent')
+  if repoExists
+    with repo
+      +nogDataBoxCreated
+      +nogDataBoxFiles
+  else
+    .alert.alert-danger(role="alert")
+      | Unknown data box, or the data box has expired.
+
+
+template(name='nogDataBoxCreated')
+  p
+    .row
+      .col-sm-2
+        | data box:
+      .col-sm-10
+        a(href=href, name="href") #{href}
+    .row
+      .col-sm-2
+        | created:
+      .col-sm-10
+        | #{created}
+    .row
+      .col-sm-2
+        | expires:
+      .col-sm-10
+        | #{expires}
+
+
+template(name='nogDataBoxFiles')
+  if isExpired
+    .alert.alert-danger(role="alert") The data box has expired.
+  else
+    +nogFiles

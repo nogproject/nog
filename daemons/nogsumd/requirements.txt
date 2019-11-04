@@ -1,0 +1,8 @@
+attrs
+boto3
+dateutils
+hvac
+prometheus_client == 0.0.15
+pymongo[tls]
+requests
+semver

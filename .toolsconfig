@@ -1,0 +1,74 @@
+# --no-self-contained creates small HTML files with beautiful bootstrap-based
+# CSS.  It therefore is the default.  Images must be listed in build "copy".
+[build "pandoc"]
+    cmd = pandoc --no-self-contained
+    exclude = */stdtools/*
+    exclude = */_private/*
+    exclude = /backend/t/sharness/*
+    exclude = /packages/cosmos-browserify/*
+    exclude = /packages/flow-router/*
+    exclude = /packages/meteor-accounts-oidc/*
+    exclude = /packages/meteor-blaze-components/*
+    exclude = /packages/meteor-job-collection/*
+    exclude = /packages/mocha-package/*
+    exclude = /packages/picker/*
+    exclude = *.inc.md
+    include = *.md
+    exclude = *
+
+[build "copy"]
+    exclude = */stdtools/*
+    exclude = */_private/*
+    include = /LICENSE.txt
+    include = *.png
+    include = *.pdf
+
+# To keep files that project-specific tools create in product, declare them
+# here as relative paths inside product.
+#
+# Examples: 'include = /my-file', 'include = subdirAtAnyLevel/*'.
+[other]
+    include = /bin/git-archive-branch-dir
+    include = /bin/git-for-each-ref-dir
+    include = /bin/git-fso
+    include = /bin/git-is-immutable-fso-stat-dir
+    include = /bin/git-is-newer-branch-dir-duration
+    include = /bin/git-receive-pack-get-owner
+    include = /bin/git-receive-pack-sudo-owner
+    include = /bin/git-rev-parse-branch-dir
+    include = /bin/git-rev-parse-is-valid-branch-dir
+    include = /bin/nogecho
+    include = /bin/nogechod
+    include = /bin/nogfsoctl
+    include = /bin/nogfsodomd
+    include = /bin/nogfsog2nd
+    include = /bin/nogfsoregd
+    include = /bin/nogfsorstd
+    include = /bin/nogfsoschd
+    include = /bin/nogfsosdwbakd3
+    include = /bin/nogfsosdwgctd
+    include = /bin/nogfsostad
+    include = /bin/nogfsostasududod
+    include = /bin/nogfsostasuod-fd
+    include = /bin/nogfsostasvsd
+    include = /bin/nogfsostaudod-fd
+    include = /bin/nogfsostaudod-path
+    include = /bin/nogfsotard
+    include = /bin/nogfsotargctd
+    include = /bin/nogfsotarsecbakd
+    include = /bin/nogfsotchd3
+    include = /bin/stat-dir-owner
+    include = /bin/tar-incremental-mtime
+    include = /bin/tartt
+    include = /bin/tartt-is-dir
+    include = /bin/tartt-store
+    include = /bin/test-git2go
+    include = /deb/*.deb
+    include = /docker-images.yml
+    include = /nog-app-2.tar.gz
+    include = /nog-app.tar.gz
+    include = /nogappd-meteor.tar.gz
+    exclude = *
+
+[release]
+    type = packed

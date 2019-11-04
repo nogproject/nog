@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package udo;
+option go_package = "udopb";
+
+service UdoAclBash {
+    rpc UdoBashPropagateAcls(UdoBashPropagateAclsI) returns (UdoBashPropagateAclsO);
+}
+
+message UdoBashPropagateAclsI {
+    reserved 1; // Potential future header.
+    string username = 2;
+    string source = 3;
+    string target = 4;
+}
+
+message UdoBashPropagateAclsO {
+}

@@ -1,0 +1,579 @@
+syntax = "proto3";
+
+package nogfso;
+option go_package = "nogfsopb";
+
+import "root-info.proto";
+import "repo-init.proto";
+import "job-control.proto";
+import "workflows.proto";
+
+service Registry {
+    rpc InitRegistry(InitRegistryI) returns (InitRegistryO);
+    rpc EnableEphemeralWorkflows(EnableEphemeralWorkflowsI) returns (EnableEphemeralWorkflowsO);
+    rpc EnablePropagateRootAcls(EnablePropagateRootAclsI) returns (EnablePropagateRootAclsO);
+
+    rpc InitRoot(InitRootI) returns (InitRootO);
+    rpc RemoveRoot(RemoveRootI) returns (RemoveRootO);
+    rpc EnableGitlabRoot(EnableGitlabRootI) returns (EnableGitlabRootO);
+    rpc DisableGitlabRoot(DisableGitlabRootI) returns (DisableGitlabRootO);
+
+    rpc UpdateRepoNaming(UpdateRepoNamingI) returns (UpdateRepoNamingO);
+    rpc PatchRepoNaming(PatchRepoNamingI) returns (PatchRepoNamingO);
+    rpc EnableDiscoveryPaths(EnableDiscoveryPathsI) returns (EnableDiscoveryPathsO);
+
+    rpc UpdateRepoInitPolicy(UpdateRepoInitPolicyI) returns (UpdateRepoInitPolicyO);
+
+    rpc UpdateRootArchiveRecipients(UpdateRootArchiveRecipientsI) returns (UpdateRootArchiveRecipientsO);
+    rpc DeleteRootArchiveRecipients(DeleteRootArchiveRecipientsI) returns (DeleteRootArchiveRecipientsO);
+
+    rpc UpdateRootShadowBackupRecipients(UpdateRootShadowBackupRecipientsI) returns (UpdateRootShadowBackupRecipientsO);
+    rpc DeleteRootShadowBackupRecipients(DeleteRootShadowBackupRecipientsI) returns (DeleteRootShadowBackupRecipientsO);
+
+    rpc InitRepo(InitRepoI) returns (InitRepoO);
+    rpc ReinitRepo(ReinitRepoI) returns (ReinitRepoO);
+    rpc EnableGitlabRepo(EnableGitlabRepoI) returns (EnableGitlabRepoO);
+
+    rpc BeginMoveRepo(BeginMoveRepoI) returns (BeginMoveRepoO);
+
+    rpc Info(InfoI) returns (InfoO);
+    rpc GetRoots(GetRootsI) returns (GetRootsO);
+    rpc GetRoot(GetRootI) returns (GetRootO);
+    rpc GetRepos(GetReposI) returns (GetReposO);
+    rpc GetRepoAclPolicy(GetRepoAclPolicyI) returns (GetRepoAclPolicyO);
+
+    rpc Events(RegistryEventsI) returns (stream RegistryEventsO);
+}
+
+service EphemeralRegistry {
+    rpc RegistryWorkflowIndexEvents(RegistryWorkflowIndexEventsI) returns (stream RegistryWorkflowIndexEventsO);
+    rpc RegistryWorkflowEvents(RegistryWorkflowEventsI) returns (stream RegistryWorkflowEventsO);
+}
+
+service DiskUsage {
+    rpc BeginDuRoot(BeginDuRootI) returns (BeginDuRootO);
+    rpc AppendDuRoot(AppendDuRootI) returns (AppendDuRootO);
+    rpc CommitDuRoot(CommitDuRootI) returns (CommitDuRootO);
+    rpc GetDuRoot(GetDuRootI) returns (stream GetDuRootO);
+}
+
+message InitRegistryI {
+    string registry = 1;
+    bytes main_vid = 2;
+}
+
+message InitRegistryO {
+    bytes main_vid = 1;
+}
+
+message EnableEphemeralWorkflowsI {
+    string registry = 1;
+    bytes vid = 2;
+}
+
+message EnableEphemeralWorkflowsO {
+    bytes vid = 1;
+    bytes ephemeral_workflows_id = 2;
+}
+
+message EnablePropagateRootAclsI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+}
+
+message EnablePropagateRootAclsO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message InitRootI {
+    string registry = 1;
+    bytes vid = 6;
+    string global_root = 3;
+    string host = 2;
+    string host_root = 4;
+    string gitlab_namespace = 5;
+}
+
+message InitRootO {
+    bytes vid = 1;
+}
+
+message RemoveRootI {
+    string registry = 1;
+    bytes vid = 2;
+    string global_root = 3;
+}
+
+message RemoveRootO {
+    bytes vid = 1;
+}
+
+message UpdateRootArchiveRecipientsI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    string global_root = 4;
+    repeated bytes archive_recipients = 5;
+}
+
+message UpdateRootArchiveRecipientsO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+    repeated bytes archive_recipients = 3;
+}
+
+message DeleteRootArchiveRecipientsI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    string global_root = 4;
+}
+
+message DeleteRootArchiveRecipientsO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message UpdateRootShadowBackupRecipientsI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    string global_root = 4;
+    repeated bytes shadow_backup_recipients = 5;
+}
+
+message UpdateRootShadowBackupRecipientsO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+    repeated bytes shadow_backup_recipients = 3;
+}
+
+message DeleteRootShadowBackupRecipientsI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    string global_root = 4;
+}
+
+message DeleteRootShadowBackupRecipientsO {
+    reserved 1; // Potential future header.
+    bytes registry_vid = 2;
+}
+
+message InitRepoI {
+    string registry = 1;
+    bytes vid = 5;
+    string global_path = 2;
+    string creator_name = 3;
+    string creator_email = 4;
+    bytes repo_id = 6;
+}
+
+message InitRepoO {
+    bytes vid = 2;
+    bytes repo = 1;
+}
+
+message BeginMoveRepoI {
+    string registry = 1;
+    bytes vid = 2;
+    bytes repo = 3;
+    bytes workflow = 4;
+    string new_global_path = 5;
+    bool is_unchanged_global_path = 6;
+}
+
+message BeginMoveRepoO {
+    bytes vid = 1;
+}
+
+message ReinitRepoI {
+    string registry = 1;
+    bytes vid = 4;
+    bytes repo = 2;
+    string reason = 3;
+}
+
+message ReinitRepoO {
+    bytes vid = 1;
+}
+
+message InfoI {
+    string registry = 1;
+}
+
+message InfoO {
+    string registry = 1;
+    bytes vid = 2;
+    int64 num_roots = 3;
+    int64 num_repos = 4;
+}
+
+message GetRootsI {
+    string registry = 1;
+}
+
+message GetRootsO {
+    string registry = 1;
+    bytes vid = 2;
+    repeated RootInfo roots = 3;
+}
+
+message RootInfo {
+    string global_root = 1;
+    string host = 2;
+    string host_root = 3;
+    string gitlab_namespace = 4;
+}
+
+message GetRootI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    string global_root = 3;
+}
+
+message GetRootO {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    RootInfoExt root = 4;
+}
+
+message RootInfoExt {
+    reserved 1; // Potential future header.
+    string global_root = 2;
+    string host = 3;
+    string host_root = 4;
+    string gitlab_namespace = 5;
+    repeated bytes archive_recipients = 6;
+    repeated bytes shadow_backup_recipients = 7;
+}
+
+message GetReposI {
+    string registry = 1;
+    // `global_path_prefix` limits the list to repos whose global path is equal
+    // or below the prefix.  Callers should pass the prefix without trailing
+    // slash.  Servers should ignore a trailing slash.
+    string global_path_prefix = 2;
+}
+
+message GetReposO {
+    string registry = 1;
+    bytes vid = 2;
+    repeated RepoInfo repos = 3;
+}
+
+message RepoInfo {
+    bytes id = 3;
+    string global_path = 1;
+    bool confirmed = 2;
+}
+
+message GetRepoAclPolicyI {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes repo = 3;
+}
+
+message GetRepoAclPolicyO {
+    reserved 1; // Potential future header.
+    string registry = 2;
+    bytes registry_vid = 3;
+    RepoAclPolicy policy = 4;
+}
+
+message RegistryEventsI {
+    string registry = 1;
+    bytes after = 2;
+    bool watch = 3;
+}
+
+message RegistryEventsO {
+    string registry = 1;
+    repeated RegistryEvent events = 2;
+    bool will_block = 3;
+}
+
+// `RegistryEvent` is a subset of the full `nogevents.Event` message.
+message RegistryEvent {
+    enum Type {
+        EV_UNSPECIFIED = 0;
+
+        // reserved 20 to 29; // fsoregistry
+        // reserved 50 to 59; // fsoregistry
+        // reserved 130 to 139; // fsoregistry
+        EV_FSO_REGISTRY_ADDED = 21;
+        EV_FSO_ROOT_ADDED = 22;
+        EV_FSO_REPO_ACCEPTED = 23;
+        EV_FSO_REPO_ADDED = 24;
+        EV_FSO_REPO_REINIT_ACCEPTED = 25;
+        EV_FSO_ROOT_UPDATED = 26;
+        EV_FSO_REPO_ENABLE_GITLAB_ACCEPTED = 27;
+        EV_FSO_REPO_NAMING_UPDATED = 28;
+        EV_FSO_REPO_NAMING_CONFIG_UPDATED = 29;
+        EV_FSO_ROOT_REMOVED = 51;
+        EV_FSO_REPO_INIT_POLICY_UPDATED = 52;
+        EV_FSO_SHADOW_REPO_MOVE_STARTED = 61; // from fsorepos
+        EV_FSO_REPO_MOVE_ACCEPTED = 53;
+        EV_FSO_REPO_MOVED = 65; // from fsorepos
+        EV_EPHEMERAL_WORKFLOWS_ENABLED = 91; // from workflows
+        EV_FSO_SPLIT_ROOT_ENABLED = 54;
+        EV_FSO_SPLIT_ROOT_DISABLED = 55;
+        EV_FSO_SPLIT_ROOT_PARAMS_UPDATED = 56;
+        EV_FSO_PATH_FLAG_SET = 57;
+        EV_FSO_PATH_FLAG_UNSET = 58;
+        EV_FSO_ROOT_ARCHIVE_RECIPIENTS_UPDATED = 59;
+        EV_FSO_ROOT_SHADOW_BACKUP_RECIPIENTS_UPDATED = 131;
+        EV_FSO_FREEZE_REPO_STARTED_2 = 161; // from workflow freeze-repo
+        EV_FSO_FREEZE_REPO_COMPLETED_2 = 164; // from workflow freeze-repo
+        EV_FSO_UNFREEZE_REPO_STARTED_2 = 171; // from workflow unfreeze-repo
+        EV_FSO_UNFREEZE_REPO_COMPLETED_2 = 174; // from workflow unfreeze-repo
+        EV_FSO_REPO_ACL_POLICY_UPDATED = 132;
+        EV_FSO_ARCHIVE_REPO_STARTED = 181; // from workflow archive-repo
+        EV_FSO_ARCHIVE_REPO_COMPLETED = 186; // from workflow archive-repo
+        EV_FSO_UNARCHIVE_REPO_STARTED = 201; // from workflow unarchive-repo
+        EV_FSO_UNARCHIVE_REPO_COMPLETED = 208; // from workflow unarchive-repo
+    }
+
+    // reserved 1 to 9; // common event header
+    Type event = 1;
+    bytes id = 2;
+    bytes parent = 3;
+
+    // reserved 20 to 29; // fsoregistry
+    // reserved 90 to 99; // fsoregistry
+    bytes repo_id = 25;
+    bytes repo_event_id = 29;
+    bytes workflow_id = 71; // from workflows
+    bytes ephemeral_workflows_id = 73; // from workflows
+    FsoRegistryInfo fso_registry_info = 21;
+    FsoRootInfo fso_root_info = 22;
+    FsoRepoInfo fso_repo_info = 23;
+    string fso_repo_reinit_reason = 24;
+    string gitlab_namespace = 26;
+    FsoRepoNaming fso_repo_naming = 27;
+    FsoRepoInitPolicy fso_repo_init_policy = 28;
+    FsoSplitRootParams fso_split_root_params = 91;
+    FsoPathFlag fso_path_flag = 92;
+    repeated bytes fso_gpg_key_fingerprints = 82; // from fsorepos
+    int32 status_code = 74; // from workflows
+    RepoAclPolicy repo_acl_policy = 102; // from workflows
+}
+
+message FsoRegistryInfo {
+    string name = 1;
+}
+
+message FsoRepoInfo {
+    bytes id = 5;
+    string global_path = 1;
+    string creator_name = 2;
+    string creator_email = 3;
+    bool confirmed = 4;
+}
+
+message FsoRepoNaming {
+    string global_root = 1;
+    string rule = 2;
+    ConfigMap config = 3;
+}
+
+message ConfigMap {
+    repeated ConfigField fields = 1;
+}
+
+message ConfigField {
+    string key = 1;
+    oneof val {
+        double number = 2;
+        DoubleList numberList = 3;
+        string text = 4;
+        StringList textList = 5;
+        ConfigMap config = 6;
+        ConfigList configList = 7;
+        bytes json = 8;
+    }
+}
+
+message DoubleList {
+    repeated double vals = 1;
+}
+
+message StringList {
+    repeated string vals = 1;
+}
+
+message ConfigList {
+    repeated ConfigMap vals = 1;
+}
+
+message FsoRepoInitPolicy {
+    enum InitPolicy {
+        IPOL_UNSPECIFIED = 0;
+        IPOL_SUBDIR_TRACKING_GLOBLIST = 1;
+    }
+
+    message SubdirTrackingGlob {
+        SubdirTracking subdir_tracking = 2;
+        string pattern = 1;
+    }
+
+    string global_root = 1;
+    InitPolicy policy = 2;
+
+    // For IPOL_SUBDIR_TRACKING_GLOBLIST.
+    repeated SubdirTrackingGlob subdir_tracking_globlist = 3;
+}
+
+message EnableGitlabRootI {
+    string registry = 1;
+    bytes vid = 4;
+    string global_root = 2;
+    string gitlab_namespace = 3;
+}
+
+message EnableGitlabRootO {
+    bytes vid = 1;
+}
+
+message DisableGitlabRootI {
+    string registry = 1;
+    bytes vid = 4;
+    string global_root = 2;
+}
+
+message DisableGitlabRootO {
+    bytes vid = 1;
+}
+
+message EnableGitlabRepoI {
+    string registry = 1;
+    bytes vid = 4;  // Registry VID.
+    bytes repo = 2;
+    string gitlab_namespace = 3;
+}
+
+message EnableGitlabRepoO {
+    bytes vid = 1;
+}
+
+message UpdateRepoNamingI {
+    string registry = 1;
+    bytes vid = 3;
+    FsoRepoNaming naming = 2;
+}
+
+message UpdateRepoNamingO {
+    bytes vid = 1;
+}
+
+message PatchRepoNamingI {
+    string registry = 1;
+    bytes vid = 3;
+    FsoRepoNaming naming_patch = 2;
+}
+
+message PatchRepoNamingO {
+    bytes vid = 1;
+}
+
+message EnableDiscoveryPathsI {
+    string registry = 1;
+    bytes vid = 2;
+    string global_root = 3;
+    // `paths` are global paths for now.  We may later add support for paths
+    // relative to root.
+    repeated DepthPath depth_paths = 4;
+}
+
+message DepthPath {
+    int32 depth = 1;
+    string path = 2;
+}
+
+message EnableDiscoveryPathsO {
+    bytes vid = 1;
+}
+
+message UpdateRepoInitPolicyI {
+    string registry = 1;
+    bytes vid = 2;
+    FsoRepoInitPolicy policy = 3;
+}
+
+message UpdateRepoInitPolicyO {
+    bytes vid = 1;
+}
+
+message RegistryWorkflowIndexEventsI {
+    string registry = 1;
+    bytes after = 2;
+    bool watch = 3;
+}
+
+message RegistryWorkflowIndexEventsO {
+    string registry = 1;
+    repeated WorkflowEvent events = 2;
+    bool will_block = 3;
+}
+
+message RegistryWorkflowEventsI {
+    string registry = 1;
+    bytes workflow = 2;
+    bytes after = 3;
+    bool watch = 4;
+}
+
+message RegistryWorkflowEventsO {
+    string registry = 1;
+    bytes workflow = 2;
+    repeated WorkflowEvent events = 3;
+    bool will_block = 4;
+}
+
+message BeginDuRootI {
+    string registry = 1;
+    bytes vid = 2;
+    string global_root = 3;
+    bytes workflow = 4;
+}
+
+message BeginDuRootO {
+    bytes registry_vid = 1;
+    bytes workflow_index_vid = 2;
+    bytes workflow_vid = 3;
+}
+
+message AppendDuRootI {
+    bytes workflow = 1;
+    bytes workflow_vid = 2;
+    repeated PathDiskUsage paths = 3;
+}
+
+message AppendDuRootO {
+    bytes workflow_vid = 1;
+}
+
+message CommitDuRootI {
+    bytes workflow = 1;
+    bytes workflow_vid = 2;
+    int32 status_code = 3;
+    string status_message = 4;
+}
+
+message CommitDuRootO {
+    bytes workflow_index_vid = 1;
+    bytes workflow_vid = 2;
+}
+
+message GetDuRootI {
+    bytes workflow = 1;
+    JobControl job_control = 2;
+}
+
+message GetDuRootO {
+    bytes workflow_vid = 1;
+    repeated PathDiskUsage paths = 2;
+}

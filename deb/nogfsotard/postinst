@@ -1,0 +1,79 @@
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+
+# This script may be called as described in "Debian Policy Manual" subsection
+# "Summary of ways maintainer scripts are called",
+# <https://www.debian.org/doc/debian-policy/ch-maintainerscripts.html#summary-of-ways-maintainer-scripts-are-called>.
+
+case "$1" in
+configure)
+    # Debconf uses unset variables.
+    set +o nounset
+    source /usr/share/debconf/confmodule
+
+    db_input medium nogfsotard/nogfsostad_user || true
+    db_go
+    db_get nogfsotard/nogfsostad_user
+    stad="${RET}"
+
+    db_input medium nogfsotard/nogfsotard_user || true
+    db_go
+    db_get nogfsotard/nogfsotard_user
+    tard="${RET}"
+    set -o nounset
+
+    # Add unprivileged daemon users and groups.
+    adduser --quiet \
+        --system --group \
+        --home /nonexistent --no-create-home \
+        "${stad}" || true
+
+    adduser --quiet \
+        --system --group \
+        --home /nonexistent --no-create-home \
+        "${tard}" || true
+
+    if ! [ -e '/etc/sudoers.d/nogfsotard' ]; then
+        install -m 0440 <<EOF /dev/stdin /etc/sudoers.d/nogfsotard
+# Uncomment the lines below to use nogfsotard with sudo.
+# Allow nogfsotard cfgPrivGitRemote='sudo', cfgPrivGitForEachRef='sudo', and
+# cfgPrivGitArchive='sudo'.
+#${tard} ALL=(root) NOPASSWD: /usr/bin/git-receive-pack-get-owner /*
+#${tard} ALL=(root) NOPASSWD: /usr/lib/nogfsotard/stat-dir-owner /*
+#${tard} ALL=(${stad}) NOPASSWD: /usr/bin/git-receive-pack
+#${tard} ALL=(${stad}) NOPASSWD: /usr/lib/nogfsotard/git-for-each-ref-dir /*
+#${tard} ALL=(${stad}) NOPASSWD: /usr/lib/nogfsotard/git-rev-parse-branch-dir master-stat /*
+#${tard} ALL=(${stad}) NOPASSWD: /usr/lib/nogfsotard/git-is-immutable-fso-stat-dir /*
+#${tard} ALL=(${stad}) NOPASSWD: /usr/lib/nogfsotard/git-is-newer-branch-dir-duration master-stat /* *
+#${tard} ALL=(${stad}) NOPASSWD: /usr/lib/nogfsotard/git-rev-parse-is-valid-branch-dir master-* /*
+#${tard} ALL=(${stad}) NOPASSWD: /usr/lib/nogfsotard/git-archive-branch-dir master-* /*
+EOF
+        echo 'nogfsotard: `visudo -f /etc/sudoers.d/nogfsotard` to allow privileged nogfsotard operations.'
+    fi
+
+    # Use `tar-incremental-mtime` if installed.
+    tar='/bin/tar'
+    for f in \
+        /usr/local/bin/tar-incremental-mtime \
+        /usr/bin/tar-incremental-mtime \
+    ; do
+        if [ -x "${f}" ]; then
+            tar="${f}"
+            echo "nogfsotard: Using \`${f}\`."
+        fi
+    done
+    install -m 0750 -g "${tard}" "${tar}" /usr/lib/nogfsotard/tar
+    setcap cap_dac_read_search=ep /usr/lib/nogfsotard/tar
+
+    install -m 0750 -g "${tard}" /usr/bin/tartt-is-dir /usr/lib/nogfsotard/tartt-is-dir
+    setcap cap_dac_read_search=ep /usr/lib/nogfsotard/tartt-is-dir
+;;
+
+abort-upgrade|abort-remove|abort-deconfigure)
+;;
+
+*)
+    echo >&2 "fatal: postinst called with unknown argument '$1'."
+    exit 1
+;;
+esac

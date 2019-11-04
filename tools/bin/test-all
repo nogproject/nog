@@ -1,0 +1,422 @@
+#!/bin/bash
+# vim: sw=4
+
+set -o errexit -o nounset -o pipefail -o noglob
+
+usage() {
+    cat <<\EOF
+
+Usage:
+  test-all [<app>]
+
+Options:
+    -h --help   Show help screen.
+    -r --reset  Remove all npm modules of the meteor app and reset the app
+                with `meteor reset`, which also deletes the local mongo
+                database.
+
+`test-all` runs all tests of the applications:
+
+    examples/access-testapp
+    examples/blob-testapp
+    examples/content-testapp
+    apps/nog-app/meteor
+
+You can limit testing to single applications with:
+
+    ./tools/bin/test-all examples/access-testapp
+    ./tools/bin/test-all examples/blob-testapp
+    ./tools/bin/test-all examples/content-testapp
+    ./tools/bin/test-all apps/nog-app/meteor
+
+The directory layout for Nightwatch should be improved.  Code and tests would
+ideally be closer together.
+
+Package tests that require Npm peer dependencies must be symlinked to an
+application and executed from there using `meteor test ...`.  See
+`packages/nog-multi-bucket/tests/meteor`.
+
+The environment variable `NOG_TEST_FLAGS` can be set to control test execution.
+It is a comma-separated list of:
+
+ - `useRealAws`: Enable tests that access the real AWS API.
+ - `skipFlaky`: Disable Nightwatch tests that check `flags.skipFlaky()`.
+ - `firefox`, `no-firefox` (default: disabled): Enable or disable Nightwatch
+    tests with Firefox.
+ - `chrome`, `no-chrome` (default: enabled): Enable or disable Nightwatch tests
+    with Chrome.
+
+To Increase the waiting time in Nightwatch tests, set the environment variable
+`NOG_TEST_WAITINGTIME_MULTIPLIER`.
+
+To skip flaky Nightwatch tests, add `skipFlaky` to `NOG_TEST_FLAGS`.  Use
+`require('nog-test-flags').flags.skipFlaky()` to mark additional tests as
+flaky.
+
+Flaky test may run more reliably after resetting the repos collection:
+
+```
+echo 'db.repos.remove({})' | meteor mongo
+```
+
+EOF
+    exit 1
+}
+
+resetWarning() {
+    local dir="$1"
+
+    if [ -n "${dir}" ]; then
+        apps="
+    ${dir}
+"
+    else
+        apps='
+    examples/access-testapp
+    examples/blob-testapp
+    examples/content-testapp
+    apps/nog-app/meteor
+'
+    fi
+
+    cat <<EOF
+Warning: Your are about to reset the following application(s):
+${apps}
+This will reset the state of the meteor app, delete the local mongo database,
+and remove all npm modules of the app.
+EOF
+
+    read -p 'Are you sure to reset the application(s) [yes/no] ? ' ans
+    if [ "${ans}" != 'yes'  ]; then
+        die 'Missing confirmation.'
+    fi
+}
+
+main() {
+    argparse "$@"
+
+    checkNode
+    checkChromeOSX
+    checkDir
+    checkSubmodules
+    if test ${opt_reset}; then
+        resetWarning "${arg_dir}"
+    fi
+
+    if [ -n "${arg_dir}" ]; then
+        testPackages "${arg_dir}"
+    else
+        for e in access blob content; do
+            testPackages "examples/${e}-testapp"
+        done
+        testPackages "apps/nog-app/meteor"
+    fi
+}
+
+argparse() {
+    opt_reset=
+    arg_dir=
+    while [ $# -gt 0 ]; do
+        case $1 in
+        -h | --help)
+            usage
+            ;;
+        -r | --reset)
+            opt_reset=t
+            shift
+            ;;
+        *)
+            if [ -n "${arg_dir}" ]; then
+                die 'Too many arguments.'
+            fi
+            arg_dir="$1"
+            arg_dir="${arg_dir%/}"
+            shift
+            ;;
+        esac
+    done
+}
+
+testPackages() {
+    local dir="$1"
+    case ${dir} in
+    examples/access-testapp)
+        if test ${opt_reset}; then
+            resetApp "${dir}"
+        fi
+        npmInstall "${dir}"
+        npmTest "${dir}"
+        ;;
+    examples/blob-testapp)
+        if test ${opt_reset}; then
+            resetApp "${dir}"
+        fi
+        npmInstall "${dir}"
+        npmTest "${dir}"
+        nightwatchApp "${dir}"
+        ;;
+    examples/content-testapp)
+        if test ${opt_reset}; then
+            resetApp "${dir}"
+        fi
+        npmInstall "${dir}"
+        npmTest "${dir}"
+        ;;
+    apps/nog-app/meteor)
+        if test ${opt_reset}; then
+            resetApp "${dir}"
+        fi
+        npmInstall "${dir}"
+        npmTest "${dir}"
+        nightwatchApp "${dir}"
+        ;;
+    *)
+        die "Unknown test app dir \`${dir}\`."
+        ;;
+    esac
+}
+
+resetApp() {
+    local dir="$1"
+    if !( set -x && cd "${dir}" && meteor reset ); then
+        die "'meteor reset' failed."
+    fi
+    if !( set -x && cd "${dir}" && rm -rf node_modules ); then
+        die "Deleting 'node_modules' failed."
+    fi
+}
+
+npmInstall() {
+    local dir="$1"
+    echo "    Ensure packages in app: ${dir}"
+    echo
+    ( set -x && cd "${dir}" && meteor npm install ) || die '
+`meteor npm install` failed.
+
+We have observed errors with `meteor npm install` in `apps/nog-app/meteor`
+with Meteor 1.5.2, NPM 4.6.1.  A typical error looks like:
+
+```
+npm ERR! enoent ENOENT: no such file or directory, rename .../apps/nog-app/meteor/node_modules/.staging/grpc-92644e06/node_modules/minimist
+```
+
+Try to use a different version of NPM as a workaround.  Use NVM to activate a
+Node version that matches the version that Meteor uses.  Then ensure that you
+use NPM v3.x.x.  NPM v2.x.x did not work:
+
+```
+nodeVersion="$(meteor node --version)" && echo "Node ${nodeVersion}"
+nvm use ${nodeVersion}
+
+ # Unless NPM is already v3.x.x
+( cd ~/.nvm/versions/node/${nodeVersion}/lib && npm install "npm@^3.0.0" )
+
+( cd apps/nog-app/meteor && npm install )
+```
+'
+    echo
+}
+
+npmTest() {
+    local dir="$1"
+    echo "    TEST driver: meteor npm test, app: ${dir}"
+    echo
+    ( set -x && cd "${dir}" && meteor npm test ) || die "Tests failed."
+    echo
+    echo
+}
+
+printManualNightwatch() {
+    local env="$1"
+    local dir="$2"
+    cat <<EOF
+To manually run Nightwatch tests, use three consoles:
+
+    cd '${dir}'
+    meteor --settings _private/settings.json
+
+    selenium-server -p 4444
+    # or
+    cd 'local/selenium'
+    java -jar selenium-server-standalone-2.52.0.jar
+
+    cd '${dir}/tests/nightwatch'
+    nightwatch -e ${env}
+
+EOF
+}
+
+useChrome() {
+    if tr ',' '\n' <<<"${NOG_TEST_FLAGS:-}" | grep -q '^chrome$'; then
+        echo "Running tests with Google Chrome; 'chrome' in NOG_TEST_FLAGS."
+        echo
+        return 0
+    elif tr ',' '\n' <<<"${NOG_TEST_FLAGS:-}" | grep -q '^no-chrome$'; then
+        echo "Skipping tests with Google Chrome; 'no-chrome' in NOG_TEST_FLAGS."
+        echo
+        return 1
+    else
+        echo 'Running tests with Google Chrome (default).'
+        echo
+        return 0
+    fi
+}
+
+useFirefox() {
+    if tr ',' '\n' <<<"${NOG_TEST_FLAGS:-}" | grep -q '^firefox$'; then
+        echo "Running tests with Firefox; 'firefox' in NOG_TEST_FLAGS."
+        echo
+        return 0
+    elif tr ',' '\n' <<<"${NOG_TEST_FLAGS:-}" | grep -q '^no-firefox$'; then
+        echo "Skipping tests with Firefox; 'no-firefox' in NOG_TEST_FLAGS."
+        echo
+        return 1
+    else
+        echo 'Skipping tests with Firefox (default).'
+        echo
+        return 1
+    fi
+}
+
+nightwatchApp() {
+    if useChrome; then
+        nightwatchEnvApp 'chrome' "$@"
+    fi
+    if useFirefox; then
+        nightwatchEnvApp 'firefox' "$@"
+    fi
+}
+
+nightwatchEnvApp() {
+    local env="$1"
+    local dir="$2"
+    echo "    TEST driver: nightwatch -e ${env}, app ${dir}"
+    echo
+    waitForSeleninum
+    printManualNightwatch "${env}" "${dir}"
+    echo
+    (
+        set -x
+        cd "${dir}"
+        trap 'kill $(jobs -p)' EXIT
+        meteor --settings _private/settings.json &
+        pid=$!
+        set +x
+        echo "Meteor child process pid: ${pid}."
+        waitForHttp 'http://localhost:3000'
+        set -x
+        cd 'tests/nightwatch'
+        nightwatch -e "${env}"
+    )
+    echo
+}
+
+waitForSeleninum() {
+    while ! isHttpOk 'http://localhost:4444/wd/hub/static/resource/hub.html'; do
+        cat <<\EOF
+Failed to connect to Selenium.
+
+The test driver requires a running Selenium server.  Install and keep Selenium
+running in a separate console.  You also need `chromedriver` in you PATH for
+Nightwatch tests with Google Chrome.
+
+Intallation via Brew:
+
+    brew install chromedriver
+    brew install selenium-server-standalone
+    selenium-server -p 4444
+
+Manual installation:
+
+    mkdir -p local/chromedriver
+    cd local/chromedriver
+    # Either mac of linux:
+    wget http://chromedriver.storage.googleapis.com/2.21/chromedriver_mac32.zip
+    wget http://chromedriver.storage.googleapis.com/2.21/chromedriver_linux64.zip
+    unzip chromedriver_*.zip
+    export PATH=$(pwd):$PATH
+    cd ../..
+
+    mkdir -p local/selenium
+    cd local/selenium
+    wget http://selenium-release.storage.googleapis.com/2.52/selenium-server-standalone-2.52.0.jar
+    java -jar selenium-server-standalone-2.52.0.jar
+
+ENTER to continue.  CTRL-C to break.
+EOF
+        read
+    done
+}
+
+waitForHttp() {
+    local url="$1"
+    while ! isHttpOk "${url}"; do
+        echo "Waiting for ${url} OK..."
+        sleep 1
+    done
+}
+
+isHttpOk() {
+    local url="$1"
+    [ "$(curl -s -o /dev/null -w "%{http_code}" "${url}")" = "200" ]
+}
+
+# Nightwatch failed with Node < 6.
+checkNode() {
+    node --version | egrep -q '^v([6-9]|[1-9][0-9]+)\.' && return
+    echo
+    echo 'Wrong version of Node.  You need at least Node 6 to the Nightwatch tests.'
+    echo 'ENTER to continue anyway.  CTRL-C to break.'
+    echo
+    read
+}
+
+checkChromeOSX() {
+    if [ "$(uname)" != 'Darwin' ]; then
+        return
+    fi
+
+    local chrome='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+    if ! [ -x "${chrome}" ]; then
+        echo
+        echo 'Could not check Chrome version.'
+        echo "Chrome is not at its wellknown location \`${chrome}\`."
+        echo 'ENTER to continue anyway.  CTRL-C to break.'
+        echo
+        read
+        return
+    fi
+
+    if "${chrome}" --version | grep 'beta'; then
+        echo
+        echo "Chrome Beta found at \`${chrome}\`."
+        echo "But Chrome Stable is recommended."
+        echo 'ENTER to continue anyway.  CTRL-C to break.'
+        echo
+        read
+    fi
+}
+
+checkDir() {
+    [ -e 'CHANGELOG.md' ] && [ -e 'README.md' ] && [ -e 'nogpackages' ] ||
+        die "Wrong directory."
+}
+
+# Uninitialized submodules may cause unexpected behavior, such as wrong package
+# versions.
+checkSubmodules() {
+    if haveUninitSubmodules; then
+        die 'There are uninitialized submodules (see above).'
+    fi
+}
+
+haveUninitSubmodules() {
+    git submodule | grep -v '^ '
+}
+
+die() {
+    printf >&2 'Error: %s\n' "$1"
+    exit 1
+}
+
+main "$@"
