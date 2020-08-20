@@ -18,7 +18,7 @@
     "@babel/runtime": "^7.3.4",
     "aws-sdk": "^2.411.0",
     "babel-runtime": "^6.23.0",
-    "bcrypt": "^3.0.4",
+    "bcrypt": "^5.0.0",
     "meteor-node-stubs": "^0.4.1"
   },
   "devDependencies": {
